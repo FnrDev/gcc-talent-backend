@@ -1,6 +1,4 @@
-# Project Name
-
-GCC Talent Freelance Marketplace
+# GCC Talent Freelance Marketplace
 
 ## Overview
 
