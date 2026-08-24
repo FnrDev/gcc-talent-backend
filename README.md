@@ -83,14 +83,11 @@ otherwise.
 | --- | --- | --- | --- |
 | `POST` | `/auth/register` | Create a client or freelancer account. | Guest |
 | `POST` | `/auth/login` | Authenticate a user and issue access/refresh credentials. | Guest |
-| `POST` | `/auth/refresh` | Exchange a valid refresh credential for a new access token. | Guest |
 | `POST` | `/auth/logout` | Invalidate the refresh credential and end the session. | Authenticated |
 | `POST` | `/auth/forgot-password` | Send a time-limited password-reset link. | Guest |
 | `POST` | `/auth/reset-password` | Set a new password using a valid reset token. | Guest |
 | `GET` | `/auth/verify-email?token={token}` | Verify an account email address. | Guest |
 | `POST` | `/auth/resend-verification` | Send a replacement email-verification link. | Authenticated |
-| `GET` | `/auth/google` | Begin Google OAuth authentication. | Guest |
-| `GET` | `/auth/google/callback` | Complete Google OAuth authentication. | Guest |
 
 ### Account
 
