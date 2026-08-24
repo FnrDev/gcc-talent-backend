@@ -31,11 +31,33 @@ const proposalSchema = new mongoose.Schema(
       required: true,
       min: 1,
     },
+    // F-PRO-01: optional milestone breakdown. When the proposal is accepted,
+    // these are carried into the new Contract's embedded milestones.
+    milestones: [
+      {
+        _id: false,
+        title: { type: String, required: true, trim: true },
+        amount: { type: Number, required: true, min: 0 },
+        dueDate: { type: Date },
+      },
+    ],
+    attachments: [
+      {
+        _id: false,
+        url: { type: String, required: true },
+        name: { type: String, required: true },
+      },
+    ],
     status: {
       type: String,
       enum: PROPOSAL_STATUSES,
       default: "pending",
       index: true,
+    },
+    // F-PRO-03: client may decline with an optional reason.
+    declineReason: {
+      type: String,
+      trim: true,
     },
   },
   { timestamps: true } // adds createdAt + updatedAt
