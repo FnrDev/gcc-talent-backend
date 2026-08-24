@@ -1,6 +1,7 @@
 // models/Contract.js
 const mongoose = require("mongoose");
 
+const CONTRACT_SOURCE_TYPES = ["job", "gig"];
 const CONTRACT_STATUSES = ["active", "completed", "cancelled"];
 const MILESTONE_STATUSES = [
   "pending", // unfunded
@@ -38,8 +39,7 @@ const deliverySchema = new mongoose.Schema(
 );
 
 // Milestones live embedded inside the Contract document (always loaded
-// together, bounded size) — per the ERD, "milestones" is an `object[]`
-// field on Contract, not a separate collection.
+// together, bounded size) — per the spec's ERD, not a separate collection.
 const milestoneSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
@@ -64,6 +64,47 @@ const milestoneSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// F-CON-01: a contract comes from either a job+proposal (Upwork style)
+// or a gig+tier (Fiverr style). The conditional `required` functions make
+// the right pair mandatory for each source type.
+const sourceSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: CONTRACT_SOURCE_TYPES,
+      required: true,
+    },
+    job: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Job",
+      required: function () {
+        return this.type === "job";
+      },
+    },
+    proposal: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Proposal",
+      required: function () {
+        return this.type === "job";
+      },
+    },
+    gig: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Gig",
+      required: function () {
+        return this.type === "gig";
+      },
+    },
+    tier: {
+      type: String, // 'basic' | 'standard' | 'premium'
+      required: function () {
+        return this.type === "gig";
+      },
+    },
+  },
+  { _id: false }
+);
+
 const contractSchema = new mongoose.Schema(
   {
     client: {
@@ -78,17 +119,9 @@ const contractSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    job: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Job",
+    source: {
+      type: sourceSchema,
       required: true,
-      index: true,
-    },
-    proposal: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Proposal",
-      required: true,
-      index: true,
     },
     title: {
       type: String,
@@ -117,6 +150,17 @@ const contractSchema = new mongoose.Schema(
         message: "A contract must have at least one milestone.",
       },
     },
+    // F-CON-07 (Must): activity log for the contract workspace timeline —
+    // who did what, when (funded, delivered, approved, revision, ...).
+    activity: [
+      {
+        _id: false,
+        type: { type: String, required: true }, // e.g. 'milestone_funded'
+        by: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        message: { type: String, trim: true },
+        at: { type: Date, default: Date.now },
+      },
+    ],
     startedAt: { type: Date },
     completedAt: { type: Date },
   },
@@ -125,5 +169,6 @@ const contractSchema = new mongoose.Schema(
 
 contractSchema.index({ client: 1, status: 1 });
 contractSchema.index({ freelancer: 1, status: 1 });
+contractSchema.index({ "source.job": 1 });
 
 module.exports = mongoose.model("Contract", contractSchema);

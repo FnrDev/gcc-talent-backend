@@ -4,49 +4,6 @@ const bcrypt = require("bcrypt");
 
 const USER_ROLES = ["client", "freelancer", "admin"];
 const USER_STATUSES = ["active", "suspended"];
-const AVAILABILITY = ["full_time", "part_time", "unavailable"];
-const CURRENCIES = ["USD", "SAR", "AED", "BHD"];
-
-// Embedded, not a separate collection: holds both freelancer-side and
-// client-side profile fields on the same User document (per the ERD,
-// `profile` is a single `object` field on User, not a linked collection).
-const profileSchema = new mongoose.Schema(
-  {
-    avatarUrl: { type: String, trim: true },
-    bio: { type: String, trim: true },
-    country: { type: String, trim: true },
-    city: { type: String, trim: true },
-
-    // Freelancer-side fields
-    headline: { type: String, trim: true },
-    skills: [{ type: mongoose.Schema.Types.ObjectId, ref: "Skill" }],
-    hourlyRate: { type: Number, min: 0 },
-    currency: { type: String, enum: CURRENCIES, default: "USD" },
-    availability: { type: String, enum: AVAILABILITY },
-    languages: [
-      {
-        _id: false,
-        name: { type: String, trim: true },
-        level: { type: String, trim: true },
-      },
-    ],
-    portfolio: [
-      {
-        _id: false,
-        title: { type: String, trim: true },
-        description: { type: String, trim: true },
-        imageUrl: { type: String, trim: true },
-        link: { type: String, trim: true },
-      },
-    ],
-
-    // Client-side fields
-    companyName: { type: String, trim: true },
-    isCompany: { type: Boolean, default: false },
-    website: { type: String, trim: true },
-  },
-  { _id: false }
-);
 
 const userSchema = new mongoose.Schema(
   {
@@ -74,24 +31,51 @@ const userSchema = new mongoose.Schema(
       enum: USER_ROLES,
       required: true,
     },
-    profile: {
-      type: profileSchema,
-      default: () => ({}),
+    avatarUrl: {
+      type: String,
     },
-    wallet: {
-      available: { type: Number, default: 0, min: 0 },
-      pending: { type: Number, default: 0, min: 0 },
+    // F-AUTH-05: email verification flag shown on profile.
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
     },
+    status: {
+      type: String,
+      enum: USER_STATUSES,
+      default: "active",
+    },
+    country: { type: String },
+    city: { type: String },
+    // F-REV-02: average rating AND review count, both denormalised on the
+    // user and recalculated whenever a new review is created.
     ratingAvg: {
       type: Number,
       default: 0,
       min: 0,
       max: 5,
     },
-    status: {
+    ratingCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // F-PAY-01: simulated wallet. available = spendable now,
+    // pending = amounts on the way in (not yet released).
+    wallet: {
+      available: { type: Number, default: 0, min: 0 },
+      pending: { type: Number, default: 0, min: 0 },
+    },
+    notificationPrefs: {
+      email: { type: Boolean, default: true },
+    },
+    // F-AUTH-02/03: hash of the current refresh token — lets logout
+    // invalidate it and lets the API detect token reuse on rotation.
+    refreshTokenHash: {
       type: String,
-      enum: USER_STATUSES,
-      default: "active",
+      select: false,
+    },
+    lastLoginAt: {
+      type: Date,
     },
   },
   { timestamps: true } // adds createdAt + updatedAt
@@ -119,6 +103,7 @@ userSchema.set("toJSON", {
   virtuals: true,
   transform: (_doc, ret) => {
     delete ret.hashedPassword;
+    delete ret.refreshTokenHash;
     delete ret.__v;
     return ret;
   },
