@@ -64,7 +64,7 @@ Follow these steps to set up and run the React frontend locally.
 
 ## Database Design
 
-![alt text](GCC-Talent-ERD.png)
+![alt text](erd.png)
 
 
 ## Routes
