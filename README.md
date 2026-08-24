@@ -73,10 +73,6 @@ The routes below define the target REST API contract. Values wrapped in braces, 
 `{jobId}`, are route parameters. Query-string filters are optional unless an endpoint states
 otherwise.
 
-> **Implementation note:** the current scaffold still exposes `POST /auth/sign-up`,
-> `POST /auth/sign-in`, and `GET /auth/me`. The table below is the agreed target API contract from
-> the project tasks; the remaining routes will be added as development progresses.
-
 ### Authentication
 
 | Method | Route | Description | Access |
