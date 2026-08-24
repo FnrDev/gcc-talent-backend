@@ -34,7 +34,7 @@ Follow these steps to set up and run the React frontend locally.
  
 2. **Perform the following commands in the command line**
 ```bash
-   git clone git@github.com:FnrDev/quizly-backend.git
+   git clone https://github.com/FnrDev/gcc-talent-backend.git .
    rm -rf .git
    rm README.md
 ```
