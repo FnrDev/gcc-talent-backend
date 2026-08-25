@@ -20,7 +20,6 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       index: true,
     },
-    // Plain password is hashed into this field by the pre-save hook below.
     hashedPassword: {
       type: String,
       required: true,
@@ -34,7 +33,6 @@ const userSchema = new mongoose.Schema(
     avatarUrl: {
       type: String,
     },
-    // F-AUTH-05: email verification flag shown on profile.
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -46,8 +44,6 @@ const userSchema = new mongoose.Schema(
     },
     country: { type: String },
     city: { type: String },
-    // F-REV-02: average rating AND review count, both denormalised on the
-    // user and recalculated whenever a new review is created.
     ratingAvg: {
       type: Number,
       default: 0,
@@ -59,8 +55,6 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
-    // F-PAY-01: simulated wallet. available = spendable now,
-    // pending = amounts on the way in (not yet released).
     wallet: {
       available: { type: Number, default: 0, min: 0 },
       pending: { type: Number, default: 0, min: 0 },
@@ -68,8 +62,6 @@ const userSchema = new mongoose.Schema(
     notificationPrefs: {
       email: { type: Boolean, default: true },
     },
-    // F-AUTH-02/03: hash of the current refresh token — lets logout
-    // invalidate it and lets the API detect token reuse on rotation.
     refreshTokenHash: {
       type: String,
       select: false,
@@ -78,11 +70,10 @@ const userSchema = new mongoose.Schema(
       type: Date,
     },
   },
-  { timestamps: true } // adds createdAt + updatedAt
+  { timestamps: true } 
 );
 
-// Hash the password whenever a plain-text password is assigned to
-// `hashedPassword` (e.g. userDoc.hashedPassword = plainPassword; userDoc.save()).
+// Hash the password 
 userSchema.pre("save", async function hashPassword(next) {
   if (!this.isModified("hashedPassword")) return next();
 
