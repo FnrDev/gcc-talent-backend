@@ -192,6 +192,21 @@ otherwise.
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
+| `GET` | `/admin/stats` | Return users by role, 7/30-day sign-ups, open jobs, active contracts, GMV, platform revenue, and a 30-day sign-up series. | Admin |
+| `GET` | `/admin/users?search={query}&role={role}&status={status}&page={page}&limit={limit}` | Search, filter, sort, and paginate users. | Admin |
+| `GET` | `/admin/users/{userId}` | Return one user's account summary, contracts, and transactions. | Admin |
+| `PATCH` | `/admin/users/{userId}` | Update a user's status, email-verification flag, or role. | Admin |
+| `DELETE` | `/admin/users/{userId}` | Delete a user with no marketplace history; otherwise suspend the account. | Admin |
+| `GET` | `/admin/categories` | List job categories. | Admin |
+| `POST` | `/admin/categories` | Create a job category. | Admin |
+| `GET` | `/admin/categories/{categoryId}` | Return a category and its skills. | Admin |
+| `PATCH` | `/admin/categories/{categoryId}` | Update a category's name or slug. | Admin |
+| `DELETE` | `/admin/categories/{categoryId}` | Delete an unused category. | Admin |
+| `GET` | `/admin/skills?category={categoryId}&search={query}` | List and filter skills. | Admin |
+| `POST` | `/admin/skills` | Create a skill in an existing category. | Admin |
+| `GET` | `/admin/skills/{skillId}` | Return one skill and its category. | Admin |
+| `PATCH` | `/admin/skills/{skillId}` | Update a skill's name or category. | Admin |
+| `DELETE` | `/admin/skills/{skillId}` | Delete a skill that is not used by a job. | Admin |
 | `POST` | `/admin/seed` | Populate development/demo data. This route must be disabled in production. | Development admin |
 
 Wallet and escrow mutation routes must run atomically and accept an `Idempotency-Key` header so a
