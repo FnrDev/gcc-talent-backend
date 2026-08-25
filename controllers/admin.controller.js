@@ -1,4 +1,3 @@
-const mongoose = require("mongoose");
 const {
   User,
   Job,
@@ -543,120 +542,6 @@ async function deleteCategory(req, res) {
   }
 }
 
-async function getSkills(req, res) {
-  try {
-    const filter = {};
-
-    if (req.query.category) {
-      if (!mongoose.Types.ObjectId.isValid(req.query.category)) {
-        return res.status(400).json({ message: "Invalid category id." });
-      }
-      filter.category = req.query.category;
-    }
-
-    if (typeof req.query.search === "string" && req.query.search.trim()) {
-      filter.name = new RegExp(escapeRegExp(req.query.search.trim()), "i");
-    }
-
-    const skills = await Skill.find(filter)
-      .populate("category", "name slug")
-      .sort({ name: 1 })
-      .lean();
-    return res.status(200).json({ skills });
-  } catch (err) {
-    return handleError(res, err);
-  }
-}
-
-async function getSkill(req, res) {
-  try {
-    const skill = await Skill.findById(req.params.id).populate("category", "name slug").lean();
-    if (!skill) return res.status(404).json({ message: "Skill not found." });
-    return res.status(200).json({ skill });
-  } catch (err) {
-    return handleError(res, err);
-  }
-}
-
-async function createSkill(req, res) {
-  try {
-    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
-    const { category } = req.body;
-
-    if (!name) return res.status(400).json({ message: "Skill name is required." });
-    if (!mongoose.Types.ObjectId.isValid(category)) {
-      return res.status(400).json({ message: "A valid category id is required." });
-    }
-
-    const categoryExists = await Category.exists({ _id: category });
-    if (!categoryExists) return res.status(404).json({ message: "Category not found." });
-
-    const skill = await Skill.create({ name, category });
-    await skill.populate("category", "name slug");
-    return res.status(201).json({ message: "Skill created.", skill });
-  } catch (err) {
-    return handleError(res, err);
-  }
-}
-
-async function updateSkill(req, res) {
-  try {
-    const updates = {};
-
-    if (Object.hasOwn(req.body, "name")) {
-      if (typeof req.body.name !== "string" || !req.body.name.trim()) {
-        return res.status(400).json({ message: "Skill name cannot be empty." });
-      }
-      updates.name = req.body.name.trim();
-    }
-
-    if (Object.hasOwn(req.body, "category")) {
-      if (!mongoose.Types.ObjectId.isValid(req.body.category)) {
-        return res.status(400).json({ message: "A valid category id is required." });
-      }
-      const categoryExists = await Category.exists({ _id: req.body.category });
-      if (!categoryExists) return res.status(404).json({ message: "Category not found." });
-      updates.category = req.body.category;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ message: "Provide a name or category to update." });
-    }
-
-    const skill = await Skill.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
-      runValidators: true,
-    }).populate("category", "name slug");
-
-    if (!skill) return res.status(404).json({ message: "Skill not found." });
-    return res.status(200).json({ message: "Skill updated.", skill });
-  } catch (err) {
-    return handleError(res, err);
-  }
-}
-
-async function deleteSkill(req, res) {
-  try {
-    const [skill, jobsCount] = await Promise.all([
-      Skill.findById(req.params.id),
-      Job.countDocuments({ skills: req.params.id }),
-    ]);
-
-    if (!skill) return res.status(404).json({ message: "Skill not found." });
-    if (jobsCount > 0) {
-      return res.status(409).json({
-        message: "Skill is in use and cannot be deleted.",
-        references: { jobs: jobsCount },
-      });
-    }
-
-    await skill.deleteOne();
-    return res.status(200).json({ message: "Skill deleted." });
-  } catch (err) {
-    return handleError(res, err);
-  }
-}
-
 module.exports = {
   getStatistics,
   getUsers,
@@ -668,9 +553,4 @@ module.exports = {
   createCategory,
   updateCategory,
   deleteCategory,
-  getSkills,
-  getSkill,
-  createSkill,
-  updateSkill,
-  deleteSkill,
 };
