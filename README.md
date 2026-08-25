@@ -188,6 +188,13 @@ otherwise.
 | `GET` | `/dashboard` | Return the current user's role-aware dashboard summary. | Authenticated |
 | `GET` | `/search?type={type}&query={query}&page={page}&limit={limit}` | Search jobs, gigs, or freelancers; `type` accepts `jobs`, `gigs`, or `freelancers`. | Public |
 
+### Skills
+
+| Method | Route | Description | Access |
+| --- | --- | --- | --- |
+| `GET` | `/skills?category={categoryId}&categorySlug={slug}&search={query}` | List available skills, optionally filtered by category or name. | Public |
+| `GET` | `/skills/{skillId}` | Return one skill with its category. | Public |
+
 ### Administration
 
 | Method | Route | Description | Access |
@@ -206,7 +213,7 @@ otherwise.
 | `POST` | `/admin/skills` | Create a skill in an existing category. | Admin |
 | `GET` | `/admin/skills/{skillId}` | Return one skill and its category. | Admin |
 | `PATCH` | `/admin/skills/{skillId}` | Update a skill's name or category. | Admin |
-| `DELETE` | `/admin/skills/{skillId}` | Delete a skill that is not used by a job. | Admin |
+| `DELETE` | `/admin/skills/{skillId}` | Delete a skill from the master list. | Admin |
 | `POST` | `/admin/seed` | Populate development/demo data. This route must be disabled in production. | Development admin |
 
 Wallet and escrow mutation routes must run atomically and accept an `Idempotency-Key` header so a
