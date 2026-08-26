@@ -17,7 +17,9 @@ const jobRoutes = require("./routes/job.routes");
 const categoryRoutes = require('./routes/category.routes')
 const walletRoutes = require('./routes/wallet.routes')
 const proposalRoutes = require('./routes/proposal.routes')
-const contractRoutes = require("./routes/contract.routes");
+const contractRoutes = require("./routes/contract.routes")
+const reviewRoutes = require("./routes/review.routes")
+
 
 // Middleware
 app.use(
@@ -43,6 +45,8 @@ app.use('/categories', categoryRoutes)
 app.use('/wallet', walletRoutes)
 app.use("/proposals", proposalRoutes);
 app.use("/contracts", contractRoutes);
+app.use("/", reviewRoutes);
+
 
 
 
