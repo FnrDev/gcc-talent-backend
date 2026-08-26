@@ -24,15 +24,10 @@ function handleError(res, err) {
     return res.status(500).json({ success: false, message: "Internal Server Error" })
 }
 
-function validateObjectId(id) {
-    return mongoose.Types.ObjectId.isValid(id)
-}
-
 async function validateCategory(categoryId) {
-    if (!validateObjectId(categoryId)) {
+    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
         return false
     }
-
     const category = await Category.exists({ _id: categoryId })
     return !!category
 }
@@ -46,11 +41,14 @@ async function validateSkills(skills) {
         return false
     }
 
-    if (skills.some((skill) => !validateObjectId(skill))) {
+    if (
+        skills.some((skill) => !mongoose.Types.ObjectId.isValid(skill))
+    ) {
         return false
     }
 
     const uniqueSkills = [...new Set(skills.map((skill) => String(skill)))]
+
     const count = await Skill.countDocuments({ _id: { $in: uniqueSkills } })
     return count === uniqueSkills.length
 }
@@ -96,7 +94,6 @@ async function createJob(req, res) {
             duration,
             attachments,
             deadline,
-            status,
         } = req.body
 
         if (!title || !description || !category || !budgetType) {
@@ -163,10 +160,6 @@ async function createJob(req, res) {
             }
         }
 
-        if (status !== undefined && !["draft", "open"].includes(status)) {
-            return res.status(400).json({ success: false, message: "New jobs can only have draft or open status." })
-        }
-
         if (attachments !== undefined && !Array.isArray(attachments)) {
             return res.status(400).json({ success: false, message: "Attachments must be an array." })
         }
@@ -184,7 +177,6 @@ async function createJob(req, res) {
             duration,
             attachments: attachments || [],
             deadline,
-            status: status || "draft",
         })
 
         const populatedJob = await Job.findById(job._id)
@@ -219,14 +211,14 @@ async function getJobs(req, res) {
         const filter = { status: "open", isHidden: false }
 
         if (category !== undefined) {
-            if (!validateObjectId(category)) {
+            if (!mongoose.Types.ObjectId.isValid(category)) {
                 return res.status(400).json({ success: false, message: "Invalid category id." })
             }
             filter.category = category
         }
 
         if (skill !== undefined) {
-            if (!validateObjectId(skill)) {
+            if (!mongoose.Types.ObjectId.isValid(skill)) {
                 return res.status(400).json({ success: false, message: "Invalid skill id." })
             }
             filter.skills = skill
@@ -311,20 +303,68 @@ async function getMyJobs(req, res) {
         const user = await User.findById(req.user._id).select("role status")
 
         if (!user) {
-            return res.status(404).json({ success: false, message: "User not found." })
+            return res.status(404).json({success: false, message: "User not found."})
         }
 
         if (user.role !== "client") {
-            return res.status(403).json({ success: false, message: "Only clients can access their jobs." })
+            return res.status(403).json({success: false, message: "Only clients can access their jobs."})
         }
 
-        const jobs = await Job.find({ client: req.user._id })
-            .populate("category", "name slug")
-            .populate("skills", "name category")
-            .sort({ createdAt: -1 })
-            .lean()
+        const {status, page = 1, limit = 20} = req.query
 
-        return res.status(200).json({ success: true, data: { jobs } })
+        const validStatuses = [
+            "draft",
+            "open",
+            "in_progress",
+            "completed",
+            "closed",
+        ]
+
+        if (status !== undefined && !validStatuses.includes(status)) {
+            return res.status(400).json({success: false, message: "Invalid job status."})
+        }
+
+        const parsedPage = Number.parseInt(page, 10)
+        const parsedLimit = Number.parseInt(limit, 10)
+
+        const currentPage = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1
+
+        const currentLimit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20
+
+        const filter = {
+            client: req.user._id
+        }
+
+        if (status !== undefined) {
+            filter.status = status
+        }
+
+        const skip = (currentPage - 1) * currentLimit
+
+        const [jobs, total] = await Promise.all([
+            Job.find(filter)
+                .populate("category", "name slug")
+                .populate("skills", "name category")
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(currentLimit)
+                .lean(),
+
+            Job.countDocuments(filter),
+        ])
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                jobs,
+                pagination: {
+                    page: currentPage,
+                    limit: currentLimit,
+                    total,
+                    totalPages: total === 0 ? 0 : Math.ceil(total / currentLimit),
+                }
+            }
+        })
 
     } catch (err) {
         return handleError(res, err)
@@ -536,6 +576,33 @@ async function closeJob(req, res) {
     }
 }
 
+async function reopenJob(req, res) {
+    try {
+        const job = await Job.findOne({_id: req.params.id, client: req.user._id})
+
+        if (!job) {
+            return res.status(404).json({success: false, message: "Job not found."})
+        }
+
+        if (job.status !== "closed") {
+            return res.status(400).json({success: false, message: "Only closed jobs can be reopened."})
+        }
+
+        if (job.deadline && job.deadline <= new Date()) {
+            return res.status(400).json({success: false, message: "Update the deadline before reopening this job."})
+        }
+
+        job.status = "open"
+
+        await job.save()
+
+        return res.status(200).json({success: true, message: "Job reopened successfully.", data: { job }})
+
+    } catch (err) {
+        return handleError(res, err)
+    }
+}
+
 async function deleteMyJob(req, res) {
     try {
         const job = await Job.findOne({ _id: req.params.id, client: req.user._id })
@@ -569,5 +636,6 @@ module.exports = {
     updateMyJob,
     publishJob,
     closeJob,
+    reopenJob,
     deleteMyJob,
 }

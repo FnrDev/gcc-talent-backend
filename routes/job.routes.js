@@ -5,27 +5,28 @@ const verifyToken = require("../middleware/verifyToken");
 const validateObjectId = require("../middleware/validateObjectId");
 
 
+// Public routes
 router.get("/", jobController.getJobs);
-
-router.get("/:id", validateObjectId, jobController.getJob);
 
 
 // Authenticated client routes
 
-router.use(verifyToken);
+router.get("/my/list", verifyToken, jobController.getMyJobs);
 
-router.get("/my/list", jobController.getMyJobs);
+router.get("/my/:id", verifyToken,  validateObjectId, jobController.getMyJob);
 
-router.get("/my/:id", validateObjectId, jobController.getMyJob);
+router.post("/", verifyToken,  jobController.createJob);
 
-router.post("/", jobController.createJob);
+router.patch("/my/:id", verifyToken,  validateObjectId, jobController.updateMyJob);
 
-router.patch("/my/:id", validateObjectId, jobController.updateMyJob);
+router.post("/my/:id/publish", verifyToken,  validateObjectId, jobController.publishJob);
 
-router.post("/my/:id/publish", validateObjectId, jobController.publishJob);
+router.post("/my/:id/close", verifyToken,  validateObjectId, jobController.closeJob);
 
-router.post("/my/:id/close", validateObjectId, jobController.closeJob);
+router.post("/my/:id/reopen", verifyToken,  validateObjectId, jobController.reopenJob);
 
-router.delete("/my/:id", validateObjectId, jobController.deleteMyJob);
+router.delete("/my/:id", verifyToken,  validateObjectId, jobController.deleteMyJob);
+
+router.get("/:id", validateObjectId, jobController.getJob);
 
 module.exports = router;
