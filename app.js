@@ -15,6 +15,7 @@ const adminRoutes = require('./routes/admin.routes')
 const skillRoutes = require('./routes/skill.routes')
 const jobRoutes = require("./routes/job.routes");
 const categoryRoutes = require('./routes/category.routes')
+const walletRoutes = require('./routes/wallet.routes')
 
 
 
@@ -39,6 +40,7 @@ app.use('/admin', adminRoutes)
 app.use('/skills', skillRoutes)
 app.use('/jobs', jobRoutes)
 app.use('/categories', categoryRoutes)
+app.use('/wallet', walletRoutes)
 
 
 

@@ -26,10 +26,6 @@ const transactionSchema = new mongoose.Schema(
       ref: "Contract",
       index: true,
     },
-    // References the embedded Contract.milestones._id this transaction relates to.
-    milestoneId: {
-      type: mongoose.Schema.Types.ObjectId,
-    },
     type: {
       type: String,
       enum: TRANSACTION_TYPES,
