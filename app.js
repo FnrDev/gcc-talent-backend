@@ -13,6 +13,8 @@ const accountRoutes = require('./routes/account.routes')
 const profileRoutes = require('./routes/profile.routes')
 const adminRoutes = require('./routes/admin.routes')
 const skillRoutes = require('./routes/skill.routes')
+const jobRoutes = require("./routes/job.routes");
+
 
 
 // Middleware
@@ -34,6 +36,7 @@ app.use("/users", accountRoutes)
 app.use("/profile", profileRoutes)
 app.use('/admin', adminRoutes)
 app.use('/skills', skillRoutes)
+app.use('/jobs', jobRoutes)
 
 
 
