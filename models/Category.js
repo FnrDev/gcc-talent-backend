@@ -17,6 +17,17 @@ const categorySchema = new mongoose.Schema(
       lowercase: true,
       index: true,
     },
+    // Icon name/URL shown next to the category in filters and on the landing page.
+    icon: {
+      type: String,
+      trim: true,
+    },
+    // F-GEN-01: the landing page shows "featured categories".
+    isFeatured: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );
