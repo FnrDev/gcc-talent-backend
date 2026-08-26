@@ -74,16 +74,11 @@ const userSchema = new mongoose.Schema(
 );
 
 // Hash the password 
-userSchema.pre("save", async function hashPassword(next) {
-  if (!this.isModified("hashedPassword")) return next();
+userSchema.pre("save", async function hashPassword() {
+  if (!this.isModified("hashedPassword")) return;
 
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.hashedPassword = await bcrypt.hash(this.hashedPassword, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
+  const salt = await bcrypt.genSalt(10);
+  this.hashedPassword = await bcrypt.hash(this.hashedPassword, salt);
 });
 
 userSchema.methods.comparePassword = function comparePassword(plainPassword) {
