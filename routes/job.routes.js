@@ -27,6 +27,15 @@ router.post("/my/:id/reopen", verifyToken,  validateObjectId, jobController.reop
 
 router.delete("/my/:id", verifyToken,  validateObjectId, jobController.deleteMyJob);
 
+
+// Proposal routes connected to jobs
+
+router.post("/:id/proposals", verifyToken, validateObjectId, proposalController.submitProposal);
+
+router.get("/:id/proposals", verifyToken, validateObjectId, proposalController.getJobProposals);
+
+
+
 router.get("/:id", validateObjectId, jobController.getJob);
 
 module.exports = router;
