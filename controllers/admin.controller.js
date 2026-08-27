@@ -399,9 +399,18 @@ async function updateUser(req, res) {
       return res.status(400).json({ message: "You cannot remove your own admin access." });
     }
 
+    const update = { $set: updates };
+    if (Object.hasOwn(updates, "isEmailVerified")) {
+      update.$unset = {
+        emailVerificationTokenHash: 1,
+        emailVerificationExpiresAt: 1,
+        emailVerificationSentAt: 1,
+      };
+    }
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      updates,
+      update,
       { new: true, runValidators: true },
     ).select(
       "name email role avatarUrl isEmailVerified status country city ratingAvg ratingCount lastLoginAt createdAt updatedAt",

@@ -17,7 +17,7 @@ marketplace safe and fair.
 
 ## Installation
  
-Follow these steps to set up and run the React frontend locally.
+Follow these steps to set up and run the backend locally.
  
 ### Prerequisites
  
@@ -39,13 +39,24 @@ Follow these steps to set up and run the React frontend locally.
    rm README.md
 ```
  
-3. **Create a `.env` file with the following values**
+3. **Copy `.env.example` to `.env` and configure the following values**
 ```env
     MONGODB_URI=your-connection-string
     PORT=3000
     CLIENT_URL=http://localhost:5173
     JWT_SECRET=super-secret-key-no-one-would-guess
+    JWT_REFRESH_SECRET=a-different-long-random-secret
+    RESEND_API_KEY=your-resend-api-key
+    RESEND_FROM_EMAIL="GCC Talent <noreply@your-domain.com>"
+    API_BASE_URL=http://localhost:3000
 ```
+
+Use a real Resend sending key and an address on a [verified Resend domain](https://resend.com/docs/dashboard/domains/introduction).
+Keep the key in `.env` locally or the deployment's secret environment variables; never put it in frontend code.
+`API_BASE_URL` is the externally reachable **backend** URL used in email links, including any reverse-proxy
+base path. Production requires this setting to use HTTPS; localhost links only work on the machine running the API.
+`CLIENT_URL` remains the frontend CORS origin. Missing or invalid email configuration makes registration return
+`503` before creating an account.
  
 4. **run:**
 ```bash
@@ -77,13 +88,53 @@ otherwise.
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
-| `POST` | `/auth/register` | Create a client or freelancer account. | Guest |
+| `POST` | `/auth/register` | Create a client or freelancer account and send a verification email through Resend. | Guest |
 | `POST` | `/auth/login` | Authenticate a user and issue access/refresh credentials. | Guest |
 | `POST` | `/auth/logout` | Invalidate the refresh credential and end the session. | Authenticated |
 | `POST` | `/auth/forgot-password` | Send a time-limited password-reset link. | Guest |
 | `POST` | `/auth/reset-password` | Set a new password using a valid reset token. | Guest |
 | `GET` | `/auth/verify-email?token={token}` | Verify an account email address. | Guest |
 | `POST` | `/auth/resend-verification` | Send a replacement email-verification link. | Authenticated |
+
+#### Signup email verification (implemented)
+
+- `POST /auth/register` accepts `{ "name": "Your name", "email": "you@your-domain.com", "password": "your-password", "role": "client" }`.
+  Roles remain `client` or `freelancer`. A `201` response includes `data.user.isEmailVerified: false`
+  and `data.verificationEmailSent`. When Resend accepts the email, that flag is `true`.
+- The email contains a link to `GET /auth/verify-email?token=...`. The random token expires after
+  24 hours and can be used once. MongoDB stores only its SHA-256 hash. A valid link sets
+  `isEmailVerified` to `true` and removes the pending verification fields atomically.
+  Browser requests receive a confirmation page; API requests receive JSON. Missing, expired,
+  invalid, or reused links return `400`. `HEAD` requests never consume a token.
+- Existing login behavior is preserved: an unverified user can still sign in, and login plus
+  `/auth/me` report `isEmailVerified`. No verification requirement is added to other API routes.
+- `POST /auth/resend-verification` requires `Authorization: Bearer <accessToken>` and no request
+  body. It sends to the signed-in account's stored email, enforces a 60-second cooldown, and
+  replaces the previous link. Already verified accounts receive `200` without another email;
+  suspended accounts receive `403`.
+- If initial delivery fails or cannot be confirmed, the account is retained and registration still returns `201`,
+  with `data.verificationEmailSent: false` and a clear message. Sign in and request another link
+  after one minute. A resend rejected by Resend returns `503` and restores the previous pending link if no
+  newer verification operation has replaced it. If the provider times out or delivery is otherwise uncertain,
+  the new link remains valid in case the email was accepted; check the inbox or resend after one minute.
+  Resend acceptance is not proof of inbox delivery;
+  check the Resend dashboard for delivery/bounce status.
+- Registration and resend share a limit of five requests per IP per 15 minutes, including successful
+  requests. Cooldowns return `429` with `Retry-After`. The IP limiter uses process-local memory;
+  use a shared store and configure trusted proxies appropriately for a multi-instance deployment.
+- Verification URLs are redacted in application request logs, and verification pages use
+  `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. Configure any proxy/access logs to
+  redact the token query too. Administrators changing verification status invalidate pending links.
+
+For provider smoke checks, use [Resend's designated test recipients](https://resend.com/docs/knowledge-base/what-email-addresses-to-use-for-testing),
+such as `delivered@resend.dev`; do not send test traffic to made-up inboxes. The `onboarding@resend.dev`
+sender is for testing, not arbitrary real-user delivery. Disable link tracking for verification emails.
+For local testing without your own domain, set `RESEND_FROM_EMAIL="GCC Talent <onboarding@resend.dev>"`
+and restart the backend. Sign up using the email address associated with your Resend account;
+[Resend rejects other real recipients](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain)
+until you verify your own domain and change the sender.
+Because the documented verification endpoint uses a direct `GET`, email security scanners may consume
+the link before the user opens it; in that case the address is already verified, and the user can sign in.
 
 ### Account
 
