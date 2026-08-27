@@ -29,6 +29,23 @@ app.use(
 );
 
 app.use(express.json())
+// Verification links carry a secret. Preserve useful request logs without recording it.
+morgan.token('url', (req) => {
+    try {
+        const url = new URL(req.originalUrl || req.url, 'http://localhost');
+        const pathname = decodeURIComponent(url.pathname).replace(/\/+$/, '').toLowerCase();
+        if (pathname.endsWith('/auth/verify-email')) {
+            return `${url.pathname}${url.search ? '?[REDACTED]' : ''}`;
+        }
+        if (url.searchParams.has('token')) {
+            url.searchParams.set('token', '[REDACTED]');
+            return `${url.pathname}${url.search}`;
+        }
+        return req.originalUrl || req.url;
+    } catch (_) {
+        return req.path;
+    }
+});
 app.use(morgan('dev'))
 app.use(cookieParser())
 

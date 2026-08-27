@@ -25,9 +25,21 @@ const authLimiter = rateLimit({
   },
 });
 
+// Count successful sends too, so account creation cannot bypass email abuse limits.
+const verificationEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many verification email requests. Please try again later.",
+  },
+});
 
 
 module.exports = {
   authLimiter,
-  standardLimiter
+  standardLimiter,
+  verificationEmailLimiter,
 }
