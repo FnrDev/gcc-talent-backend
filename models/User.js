@@ -51,6 +51,26 @@ const userSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+    passwordResetTokenHash: {
+      type: String,
+      select: false,
+      index: true,
+      sparse: true,
+    },
+    passwordResetExpiresAt: {
+      type: Date,
+      select: false,
+    },
+    passwordResetSentAt: {
+      type: Date,
+      select: false,
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+      select: false,
+    },
     status: {
       type: String,
       enum: USER_STATUSES,
@@ -107,6 +127,10 @@ userSchema.set("toJSON", {
     delete ret.emailVerificationTokenHash;
     delete ret.emailVerificationExpiresAt;
     delete ret.emailVerificationSentAt;
+    delete ret.passwordResetTokenHash;
+    delete ret.passwordResetExpiresAt;
+    delete ret.passwordResetSentAt;
+    delete ret.tokenVersion;
     delete ret.__v;
     return ret;
   },

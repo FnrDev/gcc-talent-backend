@@ -3,6 +3,7 @@ const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 const crypto = require("node:crypto");
 const { getEmailConfiguration, sendVerificationEmail } = require("../services/email.service");
+const { getTokenVersion, tokenVersionFilter } = require("../services/session.service");
 
 const ACCESS_TOKEN_EXPIRES_IN = "15m";
 const REFRESH_TOKEN_EXPIRES_IN = "7d";
@@ -69,6 +70,7 @@ function createAccessToken(user) {
     {
       _id: user._id,
       role: user.role,
+      tokenVersion: getTokenVersion(user),
     },
     process.env.JWT_SECRET,
     {
@@ -82,6 +84,7 @@ function createRefreshToken(user) {
     {
       _id: user._id,
       role: user.role,
+      tokenVersion: getTokenVersion(user),
     },
     process.env.JWT_REFRESH_SECRET,
     {
@@ -295,7 +298,7 @@ async function signIn(req, res) {
     const normalizedEmail = email.toLowerCase().trim();
 
     const user = await User.findOne({ email: normalizedEmail })
-      .select("+hashedPassword +refreshTokenHash");
+      .select("+hashedPassword +refreshTokenHash +tokenVersion");
 
     if (!user) {
       return res.status(401).json({ success: false, message: "Invalid credentials." });
@@ -314,10 +317,13 @@ async function signIn(req, res) {
     const accessToken = createAccessToken(user);
     const refreshToken = createRefreshToken(user);
 
-    user.refreshTokenHash = await bcrypt.hash(refreshToken, 12);
-    user.lastLoginAt = new Date();
-
-    await user.save();
+    const session = await User.updateOne(
+      { _id: user._id, hashedPassword: user.hashedPassword, status: { $ne: "suspended" }, ...tokenVersionFilter(user) },
+      { $set: { refreshTokenHash: await bcrypt.hash(refreshToken, 12), lastLoginAt: new Date() } },
+    );
+    if (!session.matchedCount) {
+      return res.status(401).json({ success: false, message: "Your credentials changed. Please sign in again." });
+    }
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -370,10 +376,10 @@ async function refresh(req, res) {
     }
 
     const user = await User.findById(decoded._id).select(
-      "+refreshTokenHash"
+      "+refreshTokenHash +tokenVersion"
     );
 
-    if (!user || !user.refreshTokenHash) {
+    if (!user || !user.refreshTokenHash || getTokenVersion(user) !== getTokenVersion(decoded)) {
       return res.status(401).json({ success: false, message: "Invalid refresh token.", });
     }
 
@@ -390,9 +396,13 @@ async function refresh(req, res) {
     const newAccessToken = createAccessToken(user);
     const newRefreshToken = createRefreshToken(user);
 
-    user.refreshTokenHash = await bcrypt.hash(newRefreshToken, 12);
-
-    await user.save();
+    const session = await User.updateOne(
+      { _id: user._id, refreshTokenHash: user.refreshTokenHash, status: { $ne: "suspended" }, ...tokenVersionFilter(user) },
+      { $set: { refreshTokenHash: await bcrypt.hash(newRefreshToken, 12) } },
+    );
+    if (!session.matchedCount) {
+      return res.status(401).json({ success: false, message: "Invalid refresh token. Please sign in again." });
+    }
 
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,

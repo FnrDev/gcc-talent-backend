@@ -1,24 +1,28 @@
 const bcrypt = require("bcrypt");
 const User = require('../models/User')
+const { getTokenVersion, tokenVersionFilter } = require("../services/session.service");
 
 async function changePassword(req, res) {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body || {};
 
-    if (!currentPassword || !newPassword) {
+    if (typeof currentPassword !== "string" || !currentPassword || typeof newPassword !== "string" || !newPassword) {
       return res.status(400).json({success: false, message: "Current password and new password are required.",});
     }
 
-    if (newPassword.length < 8) {
-      return res.status(400).json({ success: false, message: "New password must be at least 8 characters.",});
+    if (newPassword.length < 8 || Buffer.byteLength(newPassword, "utf8") > 72) {
+      return res.status(400).json({ success: false, message: "New password must contain at least 8 characters and no more than 72 UTF-8 bytes.",});
     }
 
     const user = await User.findById(req.user._id).select(
-      "+hashedPassword +refreshTokenHash"
+      "+hashedPassword +refreshTokenHash +tokenVersion"
     );
 
     if (!user) {
       return res.status(404).json({success: false, message: "User not found.", });
+    }
+    if (getTokenVersion(user) !== getTokenVersion(req.user)) {
+      return res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
     }
 
     const isCurrentPasswordCorrect = await user.comparePassword(currentPassword);
@@ -33,10 +37,18 @@ async function changePassword(req, res) {
       return res.status(400).json({success: false, message: "New password must be different from the current password.",});
     }
 
-    user.hashedPassword = newPassword;
-    user.refreshTokenHash = undefined;
-
-    await user.save();
+    const updated = await User.updateOne(
+      { _id: user._id, hashedPassword: user.hashedPassword, status: { $ne: "suspended" }, ...tokenVersionFilter(user) },
+      {
+        $set: { hashedPassword: await bcrypt.hash(newPassword, 10) },
+        $inc: { tokenVersion: 1 },
+        $unset: { refreshTokenHash: 1, passwordResetTokenHash: 1, passwordResetExpiresAt: 1, passwordResetSentAt: 1 },
+      },
+      { runValidators: true },
+    );
+    if (!updated.matchedCount) {
+      return res.status(401).json({ success: false, message: "Your credentials changed. Please sign in again." });
+    }
 
     res.clearCookie("refreshToken", {
       httpOnly: true,

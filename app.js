@@ -29,12 +29,12 @@ app.use(
 );
 
 app.use(express.json())
-// Verification links carry a secret. Preserve useful request logs without recording it.
+// Authentication links carry secrets. Preserve useful request logs without recording them.
 morgan.token('url', (req) => {
     try {
         const url = new URL(req.originalUrl || req.url, 'http://localhost');
         const pathname = decodeURIComponent(url.pathname).replace(/\/+$/, '').toLowerCase();
-        if (pathname.endsWith('/auth/verify-email')) {
+        if (pathname.endsWith('/auth/verify-email') || pathname.endsWith('/auth/reset-password')) {
             return `${url.pathname}${url.search ? '?[REDACTED]' : ''}`;
         }
         if (url.searchParams.has('token')) {

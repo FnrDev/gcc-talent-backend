@@ -55,7 +55,8 @@ Use a real Resend sending key and an address on a [verified Resend domain](https
 Keep the key in `.env` locally or the deployment's secret environment variables; never put it in frontend code.
 `API_BASE_URL` is the externally reachable **backend** URL used in email links, including any reverse-proxy
 base path. Production requires this setting to use HTTPS; localhost links only work on the machine running the API.
-`CLIENT_URL` remains the frontend CORS origin. Missing or invalid email configuration makes registration return
+`CLIENT_URL` is the frontend base URL used for CORS and password reset links. Use a public HTTPS URL in production.
+Missing or invalid email configuration makes registration return
 `503` before creating an account.
  
 4. **run:**
@@ -91,8 +92,8 @@ otherwise.
 | `POST` | `/auth/register` | Create a client or freelancer account and send a verification email through Resend. | Guest |
 | `POST` | `/auth/login` | Authenticate a user and issue access/refresh credentials. | Guest |
 | `POST` | `/auth/logout` | Invalidate the refresh credential and end the session. | Authenticated |
-| `POST` | `/auth/forgot-password` | Send a time-limited password-reset link. | Guest |
-| `POST` | `/auth/reset-password` | Set a new password using a valid reset token. | Guest |
+| `POST` | `/auth/forgot-password` | Request a password reset email with a 30-minute link. | Guest |
+| `POST` | `/auth/reset-password` | Set a new password using a single-use reset token and revoke existing sessions. | Guest |
 | `GET` | `/auth/verify-email?token={token}` | Verify an account email address. | Guest |
 | `POST` | `/auth/resend-verification` | Send a replacement email-verification link. | Authenticated |
 
@@ -135,6 +136,48 @@ and restart the backend. Sign up using the email address associated with your Re
 until you verify your own domain and change the sender.
 Because the documented verification endpoint uses a direct `GET`, email security scanners may consume
 the link before the user opens it; in that case the address is already verified, and the user can sign in.
+
+#### Forgot and reset password (implemented)
+
+- The frontend sign-in page links to `/forgot-password`. Submit `POST /auth/forgot-password`
+  with `{ "email": "you@your-domain.com" }`. For valid input, the API responds with the same
+  `200` message for existing, unknown, suspended, and recently requested accounts, without waiting
+  for account lookup or email delivery. This prevents account discovery through response content
+  or provider latency. Invalid email input returns `400`; global configuration or database
+  unavailability returns `503`.
+- Eligible accounts receive a Resend email linking to `CLIENT_URL/reset-password?token=...`.
+  The token is 32 random bytes, stored only as a SHA-256 hash, expires after 30 minutes,
+  and can be used once. Requesting a reset does not change the password or invalidate sessions.
+  Each account has a 60-second request cooldown; the request endpoint also allows five requests
+  per IP per 15 minutes. Cooldown responses remain generic; the IP limit returns `429`.
+- On a definite provider rejection, the previous reset token/expiry are restored without
+  removing the cooldown or overwriting newer state. On timeouts or uncertain outcomes, the new
+  link stays valid in case the email was delivered. Provider failures are logged safely and
+  never change the generic request response. Processing runs in the existing Node process,
+  so a restart can interrupt delivery; users can request another link after the cooldown.
+- The frontend `/reset-password` page collects a new password and confirmation. The token
+  remains only in component memory and is removed from the URL; after reloading the page,
+  reopen the email link. Merely opening or scanning the link never changes the password.
+  Submit `POST /auth/reset-password` with `{ "token": "token-from-email", "newPassword": "your-new-password" }`.
+  Passwords require at least eight characters and at most 72 UTF-8 bytes to avoid bcrypt truncation.
+- A successful reset returns `200`, atomically consumes the token, stores the bcrypt hash,
+  clears the refresh credential, and increments the account's session version. Existing access
+  and refresh tokens immediately stop working, including credentials from concurrent login or
+  refresh attempts. Users must sign in again; the frontend clears its old local authentication.
+  A notification email confirms the password change without including the password or a reset token.
+  Notification failure does not undo the successful reset.
+- Missing, malformed, expired, suspended-account, or used reset tokens return `400` with
+  `code: "INVALID_RESET_TOKEN"`; invalid passwords return `400` with `code: "INVALID_PASSWORD"`.
+  The reset endpoint allows ten requests per IP per 15 minutes. Both endpoints use `no-store`
+  on controller responses; reset pages use `no-referrer`. Redact reset tokens in frontend/proxy
+  access logs as well as application logs.
+- Authenticated password changes also invalidate pending reset links and all existing sessions.
+  Accounts/tokens created before session versioning continue to work until their password changes.
+  No database migration or password change is needed for existing users.
+
+The local `onboarding@resend.dev` sender restriction also applies to password reset and notification
+emails: only the Resend account email and designated test recipients are supported until a sending
+domain is verified.
 
 ### Account
 
