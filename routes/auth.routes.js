@@ -1,7 +1,8 @@
 const router = require("express").Router();
 const verifyToken = require("../middleware/verifyToken");
 const authController = require('../controllers/auth.controller')
-const { verificationEmailLimiter } = require("../middleware/rateLimiters");
+const passwordController = require("../controllers/password.controller");
+const { verificationEmailLimiter, passwordResetRequestLimiter, passwordResetLimiter } = require("../middleware/rateLimiters");
 
 router.post("/register", verificationEmailLimiter, authController.signUp );
 
@@ -12,6 +13,9 @@ router.get("/verify-email", authController.verifyEmail);
 router.post("/resend-verification", verifyToken, verificationEmailLimiter, authController.resendVerification);
 
 router.post("/login",  authController.signIn);
+
+router.post("/forgot-password", passwordResetRequestLimiter, passwordController.forgotPassword);
+router.post("/reset-password", passwordResetLimiter, passwordController.resetPassword);
 
 router.post("/refresh", authController.refresh);
 
