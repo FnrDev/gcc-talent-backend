@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { getEmailConfiguration, sendVerificationEmail } = require("../services/email.service");
 const { getTokenVersion, tokenVersionFilter } = require("../services/session.service");
 
-const ACCESS_TOKEN_EXPIRES_IN = "15m";
+const ACCESS_TOKEN_EXPIRES_IN = "30d";
 const REFRESH_TOKEN_EXPIRES_IN = "7d";
 const EMAIL_VERIFICATION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const EMAIL_VERIFICATION_COOLDOWN_MS = 60 * 1000;
