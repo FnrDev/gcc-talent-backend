@@ -1,6 +1,7 @@
 const router = require("express").Router();
 
 const jobController = require("../controllers/job.controller");
+const proposalController = require("../controllers/proposal.controller")
 const verifyToken = require("../middleware/verifyToken");
 const validateObjectId = require("../middleware/validateObjectId");
 
