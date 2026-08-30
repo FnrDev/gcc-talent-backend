@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const FreelancerProfile = require("../models/FreelancerProfile");
 const ClientProfile = require("../models/ClientProfile");
+const { recordAuditLog } = require("../services/audit.service");
 
 async function getMyProfile(req, res) {
     try {
@@ -88,7 +89,18 @@ async function updateMyProfile(req, res) {
             if (availability !== undefined) profile.availability = availability;
             if (portfolio !== undefined) profile.portfolio = portfolio;
 
+            const changedFields = [
+                "headline", "bio", "skills", "hourlyRate", "currency", "languages", "availability", "portfolio",
+            ].filter((field) => profile.isModified(field));
             await profile.save();
+            if (changedFields.length) {
+                await recordAuditLog(req, {
+                    action: "update",
+                    resource: "FreelancerProfile",
+                    resourceId: profile._id,
+                    details: { operation: "updateMyProfile", changedFields },
+                });
+            }
 
             return res.status(200).json({
                 success: true, message: "Freelancer profile updated successfully.", data: { profile }
@@ -114,7 +126,17 @@ async function updateMyProfile(req, res) {
             if (description !== undefined) profile.description = description;
             if (website !== undefined) profile.website = website;
 
+            const changedFields = ["companyName", "isCompany", "description", "website"]
+                .filter((field) => profile.isModified(field));
             await profile.save();
+            if (changedFields.length) {
+                await recordAuditLog(req, {
+                    action: "update",
+                    resource: "ClientProfile",
+                    resourceId: profile._id,
+                    details: { operation: "updateMyProfile", changedFields },
+                });
+            }
 
             return res.status(200).json({
                 success: true, message: "Client profile updated successfully.", data: { profile }

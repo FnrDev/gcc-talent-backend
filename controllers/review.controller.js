@@ -2,6 +2,7 @@ const mongoose = require("mongoose")
 const Review = require("../models/Review")
 const Contract = require("../models/Contract")
 const User = require("../models/User")
+const { recordAuditLogs } = require("../services/audit.service")
 
 function handleError(res, err) {
     if (err?.code === 11000) {
@@ -95,7 +96,7 @@ async function createReview(req, res) {
 
         const stats = ratingStats[0]
 
-        await User.updateOne(
+        const ratingUpdate = await User.updateOne(
             { _id: revieweeId },
             {
                 $set: {
@@ -105,6 +106,30 @@ async function createReview(req, res) {
             },
             { session }
         )
+
+        const auditEntries = [{
+            action: "create",
+            resource: "Review",
+            resourceId: review._id,
+            details: { operation: "createReview", contractId: contract._id, revieweeId, rating },
+        }]
+
+        if (ratingUpdate.modifiedCount > 0) {
+            auditEntries.push({
+                action: "update",
+                resource: "User",
+                resourceId: revieweeId,
+                details: {
+                    operation: "createReview",
+                    reviewId: review._id,
+                    changedFields: ["ratingAvg", "ratingCount"],
+                    ratingAvg: stats ? Math.round(stats.ratingAvg * 100) / 100 : 0,
+                    ratingCount: stats ? stats.ratingCount : 0,
+                },
+            })
+        }
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 

@@ -6,6 +6,7 @@
 // across files) as soon as this module is required once, e.g. from db.js.
 
 module.exports = {
+  AuditLog: require("./AuditLog"),
   User: require("./User"),
   FreelancerProfile: require("./FreelancerProfile"),
   ClientProfile: require("./ClientProfile"),

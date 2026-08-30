@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
+const { recordAuditLog } = require("../services/audit.service");
 const {
   getPasswordResetConfiguration,
   sendPasswordResetEmail,
@@ -66,6 +67,14 @@ async function forgotPassword(req, res) {
 
     if (!previous) return;
 
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: previous._id,
+      actor: null,
+      details: { operation: "forgotPassword", changedFields: ["recovery"] },
+    });
+
     try {
       await sendPasswordResetEmail({ user: previous, token, configuration });
     } catch (err) {
@@ -79,7 +88,16 @@ async function forgotPassword(req, res) {
         }
         if (!Object.keys(restore.$set).length) delete restore.$set;
         if (!Object.keys(restore.$unset).length) delete restore.$unset;
-        await User.updateOne({ _id: previous._id, passwordResetTokenHash: tokenHash }, restore);
+        const restored = await User.updateOne({ _id: previous._id, passwordResetTokenHash: tokenHash }, restore);
+        if (restored.modifiedCount > 0) {
+          await recordAuditLog(req, {
+            action: "update",
+            resource: "User",
+            resourceId: previous._id,
+            actor: null,
+            details: { operation: "forgotPassword.restore", changedFields: ["recovery"] },
+          });
+        }
       }
       // A lost provider response may still mean the email was delivered; retain its token.
       console.error("Password reset email delivery failed or could not be confirmed.");
@@ -126,6 +144,14 @@ async function resetPassword(req, res) {
       { new: true, runValidators: true },
     ).select("name email");
     if (!user) return invalidResetToken(res);
+
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: user._id,
+      actor: user,
+      details: { operation: "resetPassword", changedFields: ["credentials", "sessions", "recovery"] },
+    });
 
     res.clearCookie("refreshToken", {
       httpOnly: true,

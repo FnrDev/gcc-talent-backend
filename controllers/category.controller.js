@@ -2,6 +2,7 @@ const mongoose = require("mongoose")
 const Category = require("../models/Category")
 const Skill = require("../models/Skill")
 const Job = require("../models/Job")
+const { recordAuditLog } = require("../services/audit.service")
 
 const MAX_PAGE_SIZE = 100
 const DEFAULT_PAGE_SIZE = 20
@@ -207,6 +208,12 @@ async function createCategory(req, res) {
             icon: typeof icon === "string" ? icon.trim() : undefined,
             isFeatured: isFeatured ?? false,
         })
+        await recordAuditLog(req, {
+            action: "create",
+            resource: "Category",
+            resourceId: category._id,
+            details: { operation: "createCategory", name: category.name, slug: category.slug },
+        })
 
         return res.status(201).json({
             success: true,
@@ -270,6 +277,12 @@ async function updateCategory(req, res) {
             return res.status(404).json({ success: false, message: "Category not found." })
         }
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Category",
+            resourceId: category._id,
+            details: { operation: "updateCategory", changes: updates },
+        })
         return res.status(200).json({
             success: true,
             message: "Category updated successfully.",
@@ -301,7 +314,14 @@ async function deleteCategory(req, res) {
             })
         }
 
-        await category.deleteOne()
+        const deleted = await category.deleteOne()
+        await recordAuditLog(req, {
+            action: "delete",
+            resource: "Category",
+            resourceId: category._id,
+            affectedCount: deleted.deletedCount,
+            details: { operation: "deleteCategory" },
+        })
 
         return res.status(200).json({ success: true, message: "Category deleted successfully." })
     } catch (err) {

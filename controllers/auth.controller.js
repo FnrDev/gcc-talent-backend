@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const crypto = require("node:crypto");
 const { getEmailConfiguration, sendVerificationEmail } = require("../services/email.service");
 const { getTokenVersion, tokenVersionFilter } = require("../services/session.service");
+const { recordAuditLog } = require("../services/audit.service");
 
 const ACCESS_TOKEN_EXPIRES_IN = "30d";
 const REFRESH_TOKEN_EXPIRES_IN = "7d";
@@ -119,6 +120,13 @@ async function signUp(req, res) {
       role,
       ...verification.fields,
     });
+    await recordAuditLog(req, {
+      action: "create",
+      resource: "User",
+      resourceId: user._id,
+      actor: user,
+      details: { operation: "signUp", status: user.status },
+    });
 
     let verificationEmailSent = false;
     let deliveryUnconfirmed = false;
@@ -195,6 +203,14 @@ async function verifyEmail(req, res) {
       return verificationResponse(req, res, 400, "This verification link is invalid, expired, or has already been used.");
     }
 
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: user._id,
+      actor: user,
+      details: { operation: "verifyEmail", changedFields: ["isEmailVerified", "emailVerification"] },
+    });
+
     return verificationResponse(req, res, 200, "Your email address has been verified successfully.");
   } catch (_) {
     console.error("Email verification failed.");
@@ -249,6 +265,13 @@ async function resendVerification(req, res) {
       return res.status(429).json({ success: false, message: "Please wait before requesting another verification email.", retryAfterSeconds: 60 });
     }
 
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: previous._id,
+      details: { operation: "resendVerification", changedFields: ["emailVerification"] },
+    });
+
     try {
       await sendVerificationEmail({ user: previous, token: verification.token, configuration });
     } catch (err) {
@@ -268,10 +291,18 @@ async function resendVerification(req, res) {
       if (!Object.keys(restore.$unset).length) delete restore.$unset;
 
       // Keep the previous link on failure, without overwriting a newer send or verification.
-      await User.updateOne(
+      const restored = await User.updateOne(
         { _id: previous._id, emailVerificationTokenHash: verification.fields.emailVerificationTokenHash, isEmailVerified: { $ne: true } },
         restore,
       );
+      if (restored.modifiedCount > 0) {
+        await recordAuditLog(req, {
+          action: "update",
+          resource: "User",
+          resourceId: previous._id,
+          details: { operation: "resendVerification.restore", changedFields: ["emailVerification"] },
+        });
+      }
       console.error("Verification email delivery failed.");
       return res.status(503).json({ success: false, message: "The verification email could not be sent. Please try again later." });
     }
@@ -323,6 +354,16 @@ async function signIn(req, res) {
     );
     if (!session.matchedCount) {
       return res.status(401).json({ success: false, message: "Your credentials changed. Please sign in again." });
+    }
+
+    if (session.modifiedCount > 0) {
+      await recordAuditLog(req, {
+        action: "update",
+        resource: "User",
+        resourceId: user._id,
+        actor: user,
+        details: { operation: "signIn", changedFields: ["sessions", "lastLoginAt"] },
+      });
     }
 
     res.cookie("refreshToken", refreshToken, {
@@ -404,6 +445,16 @@ async function refresh(req, res) {
       return res.status(401).json({ success: false, message: "Invalid refresh token. Please sign in again." });
     }
 
+    if (session.modifiedCount > 0) {
+      await recordAuditLog(req, {
+        action: "update",
+        resource: "User",
+        resourceId: user._id,
+        actor: user,
+        details: { operation: "refresh", changedFields: ["sessions"] },
+      });
+    }
+
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -435,7 +486,16 @@ async function logout(req, res) {
 
     if (user) {
       user.refreshTokenHash = undefined;
+      const sessionChanged = user.isModified("refreshTokenHash");
       await user.save();
+      if (sessionChanged) {
+        await recordAuditLog(req, {
+          action: "update",
+          resource: "User",
+          resourceId: user._id,
+          details: { operation: "logout", changedFields: ["sessions"] },
+        });
+      }
     }
 
     res.clearCookie("refreshToken", {

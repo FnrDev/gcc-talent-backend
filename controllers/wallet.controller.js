@@ -2,6 +2,7 @@ const crypto = require("crypto");
 
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
+const { recordAuditLog } = require("../services/audit.service");
 
 function parseAmount(rawAmount) {
   const amount = Number(rawAmount);
@@ -90,6 +91,13 @@ async function AddToWallet(req, res) {
       throw err;
     }
 
+    await recordAuditLog(req, {
+      action: "create",
+      resource: "Transaction",
+      resourceId: transaction._id,
+      details: { operation: "AddToWallet", userId: user._id, type: "deposit", amount, direction: "credit", status: transaction.status },
+    });
+
     const updatedUser = await User.findByIdAndUpdate(
       user._id,
       { $inc: { "wallet.available": amount } },
@@ -97,10 +105,26 @@ async function AddToWallet(req, res) {
     );
 
     if (!updatedUser) {
-      await Transaction.findByIdAndUpdate(transaction._id, { status: "failed" });
+      const failedTransaction = await Transaction.findByIdAndUpdate(transaction._id, { status: "failed" });
+
+      if (failedTransaction) {
+        await recordAuditLog(req, {
+          action: "update",
+          resource: "Transaction",
+          resourceId: transaction._id,
+          details: { operation: "AddToWallet", previousStatus: failedTransaction.status, status: "failed", reason: "user_not_found" },
+        });
+      }
 
       return res.status(404).json({success: false, message: "User not found.",});
     }
+
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: updatedUser._id,
+      details: { operation: "AddToWallet", transactionId: transaction._id, changedFields: ["wallet.available"], availableBalanceDelta: amount },
+    });
 
     return res.status(201).json({
       success: true,
@@ -163,6 +187,13 @@ async function RemoveFromWallet(req, res) {
       throw err;
     }
 
+    await recordAuditLog(req, {
+      action: "create",
+      resource: "Transaction",
+      resourceId: transaction._id,
+      details: { operation: "RemoveFromWallet", userId: user._id, type: "withdrawal", amount, direction: "debit", status: transaction.status },
+    });
+
     const updatedUser = await User.findOneAndUpdate(
       { _id: user._id, "wallet.available": { $gte: amount } },
       { $inc: { "wallet.available": -amount } },
@@ -170,10 +201,26 @@ async function RemoveFromWallet(req, res) {
     );
 
     if (!updatedUser) {
-      await Transaction.findByIdAndUpdate(transaction._id, { status: "failed" });
+      const failedTransaction = await Transaction.findByIdAndUpdate(transaction._id, { status: "failed" });
+
+      if (failedTransaction) {
+        await recordAuditLog(req, {
+          action: "update",
+          resource: "Transaction",
+          resourceId: transaction._id,
+          details: { operation: "RemoveFromWallet", previousStatus: failedTransaction.status, status: "failed", reason: "insufficient_available_balance" },
+        });
+      }
 
       return res.status(400).json({success: false, message: "Insufficient available balance.",});
     }
+
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: updatedUser._id,
+      details: { operation: "RemoveFromWallet", transactionId: transaction._id, changedFields: ["wallet.available"], availableBalanceDelta: -amount },
+    });
 
     return res.status(201).json({
       success: true,
