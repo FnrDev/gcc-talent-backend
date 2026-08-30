@@ -1,5 +1,17 @@
 const mongoose = require("mongoose");
 
+const SERVICE_IMAGE_TYPES = ["image/gif", "image/jpeg", "image/png", "image/webp"];
+
+const serviceImageSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true, trim: true, maxlength: 2048 },
+    name: { type: String, required: true, trim: true, maxlength: 180 },
+    size: { type: Number, required: true, min: 1, max: 10 * 1024 * 1024 },
+    contentType: { type: String, required: true, enum: SERVICE_IMAGE_TYPES },
+  },
+  { _id: false },
+);
+
 const serviceSchema = new mongoose.Schema(
   {
     freelancer: {
@@ -32,6 +44,14 @@ const serviceSchema = new mongoose.Schema(
           message: "A service cannot include the same package more than once.",
         },
       ],
+    },
+    images: {
+      type: [serviceImageSchema],
+      default: [],
+      validate: {
+        validator: (images) => images.length <= 5,
+        message: "A service can include at most five images.",
+      },
     },
   },
   { timestamps: true }

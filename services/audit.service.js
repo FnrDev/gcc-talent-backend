@@ -5,7 +5,7 @@ const AuditLog = require("../models/AuditLog");
 const requestIds = new WeakMap();
 const REDACTED = "[REDACTED]";
 const MAX_DETAILS_BYTES = 16 * 1024;
-const SENSITIVE_KEY = /password|token|secret|authorization|cookie|credential|apikey|privatekey|otp|salt/;
+const SENSITIVE_KEY = /password|token|secret|authorization|cookie|credential|apikey|privatekey|otp|salt|card|pan|cvc|cvv/;
 
 function sanitizeDetails(value, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return null;
@@ -64,6 +64,7 @@ function buildEntry(req, entry, request) {
     details = { truncated: true };
   }
   return {
+    ...(entry.auditId ? { _id: entry.auditId } : {}),
     actor,
     actorType: actor ? "user" : (req ? "anonymous" : "system"),
     action: entry.action,

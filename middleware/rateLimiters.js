@@ -62,6 +62,15 @@ const uploadLimiter = rateLimit({
   message: { success: false, message: "Too many attachment uploads. Please try again later." },
 });
 
+const serviceOrderLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => String(req.user._id),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many checkout attempts. Please try again later." },
+});
+
 
 module.exports = {
   authLimiter,
@@ -70,4 +79,5 @@ module.exports = {
   passwordResetRequestLimiter,
   passwordResetLimiter,
   uploadLimiter,
+  serviceOrderLimiter,
 }

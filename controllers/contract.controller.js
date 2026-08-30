@@ -102,6 +102,8 @@ async function getContracts(req, res) {
                 .populate("client", "name avatarUrl country city ratingAvg ratingCount")
                 .populate("freelancer", "name avatarUrl country city ratingAvg ratingCount")
                 .populate("source.job", "title status")
+                .populate("source.service", "name images")
+                .populate("source.package", "name title deliveryDays revisions")
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(currentLimit)
@@ -125,6 +127,8 @@ async function getContract(req, res) {
             .populate("client", "name avatarUrl country city ratingAvg ratingCount")
             .populate("freelancer", "name avatarUrl country city ratingAvg ratingCount")
             .populate("source.job", "title status")
+            .populate("source.service", "name images")
+            .populate("source.package", "name title deliveryDays revisions")
             .populate("activity.by", "name role")
 
         if (!contract) {

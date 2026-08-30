@@ -3,10 +3,22 @@ const Package = require("../models/Package");
 const Service = require("../models/Service");
 const User = require("../models/User");
 const { recordAuditLog } = require("../services/audit.service");
+const {
+  SERVICE_IMAGE_PURPOSE,
+  verifyUploadReceipt,
+} = require("../services/uploadReceipt.service");
 
 const DEFAULT_PAGE_SIZE = 9;
 const MAX_PAGE_SIZE = 50;
 const MAX_SEARCH_LENGTH = 100;
+const MAX_SERVICE_IMAGES = 5;
+const MAX_SERVICE_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+const SERVICE_IMAGE_EXTENSIONS = new Map([
+  ["image/gif", ".gif"],
+  ["image/jpeg", ".jpg"],
+  ["image/png", ".png"],
+  ["image/webp", ".webp"],
+]);
 const SERVICE_SORTS = {
   recommended: { recommendationScore: -1, ratingAvg: -1, createdAt: -1, _id: -1 },
   newest: { createdAt: -1, _id: -1 },
@@ -39,6 +51,10 @@ function handleError(res, err) {
 
   if (err?.name === "ValidationError" || err?.name === "CastError") {
     return res.status(400).json({ success: false, message: err.message });
+  }
+
+  if (err?.code === "UPLOAD_RECEIPT_CONFIGURATION_ERROR") {
+    return res.status(503).json({ success: false, message: "Service images are temporarily unavailable." });
   }
 
   console.error(err);
@@ -179,6 +195,7 @@ function serviceViewPipeline(initialMatch = {}) {
 const PUBLIC_SERVICE_PROJECT = {
   _id: 1,
   name: 1,
+  images: 1,
   freelancer: 1,
   packages: 1,
   startingPrice: 1,
@@ -316,6 +333,84 @@ function validatePackages(packages) {
   return { packageIds };
 }
 
+function isOwnedUploadUrl(value, userId, contentType) {
+  const publicBaseUrl = String(process.env.R2_PUBLIC_BASE_URL || "").trim();
+  const extension = SERVICE_IMAGE_EXTENSIONS.get(contentType);
+  if (!publicBaseUrl || !extension) return false;
+
+  try {
+    const base = new URL(publicBaseUrl);
+    const imageUrl = new URL(value);
+    const pathname = decodeURIComponent(imageUrl.pathname);
+    const basePath = base.pathname.replace(/\/+$/, "");
+    const expectedPrefix = `${basePath}/attachments/${String(userId)}/`;
+
+    return (
+      imageUrl.protocol === "https:" &&
+      imageUrl.origin === base.origin &&
+      !imageUrl.username &&
+      !imageUrl.password &&
+      !imageUrl.search &&
+      !imageUrl.hash &&
+      pathname.startsWith(expectedPrefix) &&
+      pathname.toLowerCase().endsWith(extension)
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function validateServiceImages(images, userId) {
+  if (images === undefined) return { serviceImages: [] };
+  if (!Array.isArray(images)) return { error: "Service images must be an array." };
+  if (images.length > MAX_SERVICE_IMAGES) {
+    return { error: `A service can include at most ${MAX_SERVICE_IMAGES} images.` };
+  }
+
+  const serviceImages = [];
+  const imageUrls = new Set();
+
+  for (const image of images) {
+    if (!image || typeof image !== "object" || Array.isArray(image)) {
+      return { error: "Every service image must include valid upload metadata." };
+    }
+
+    const url = typeof image.url === "string" ? image.url.trim() : "";
+    const name = typeof image.name === "string" ? image.name.trim() : "";
+    const contentType = typeof image.contentType === "string" ? image.contentType.trim() : "";
+    const receipt = typeof image.receipt === "string" ? image.receipt : "";
+    const size = image.size;
+
+    if (!url || url.length > 2048 || !name || name.length > 180) {
+      return { error: "Every service image must include a valid URL and file name." };
+    }
+    if (!Number.isSafeInteger(size) || size < 1 || size > MAX_SERVICE_IMAGE_SIZE_BYTES) {
+      return { error: "Every service image must be 10 MB or smaller." };
+    }
+    if (!SERVICE_IMAGE_EXTENSIONS.has(contentType)) {
+      return { error: "Service images must be JPEG, PNG, WebP, or GIF files." };
+    }
+    if (!isOwnedUploadUrl(url, userId, contentType)) {
+      return { error: "Every service image must be uploaded by the current freelancer." };
+    }
+    if (!verifyUploadReceipt(receipt, {
+      attachment: { url, name, size, contentType },
+      userId,
+      purpose: SERVICE_IMAGE_PURPOSE,
+    })) {
+      return { error: "Every service image must include a valid upload receipt." };
+    }
+    if (imageUrls.has(url)) {
+      return { error: "A service cannot include the same image more than once." };
+    }
+
+    imageUrls.add(url);
+    serviceImages.push({ url, name, size, contentType });
+  }
+
+  return { serviceImages };
+}
+
 async function createService(req, res) {
   try {
     const user = await User.findById(req.user._id).select("role status");
@@ -338,7 +433,7 @@ async function createService(req, res) {
       });
     }
 
-    const { name, packages } = req.body || {};
+    const { name, packages, images } = req.body || {};
 
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({
@@ -351,6 +446,12 @@ async function createService(req, res) {
 
     if (error) {
       return res.status(400).json({ success: false, message: error });
+    }
+
+    const { error: imageError, serviceImages } = validateServiceImages(images, user._id);
+
+    if (imageError) {
+      return res.status(400).json({ success: false, message: imageError });
     }
 
     const ownedPackageCount = await Package.countDocuments({
@@ -379,6 +480,7 @@ async function createService(req, res) {
       freelancer: user._id,
       name: name.trim(),
       packages: packageIds,
+      images: serviceImages,
     });
 
     await recordAuditLog(req, {
@@ -389,6 +491,7 @@ async function createService(req, res) {
         operation: "createService",
         name: service.name,
         packages: service.packages,
+        imageCount: service.images.length,
       },
     });
 

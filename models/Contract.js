@@ -1,7 +1,7 @@
 // models/Contract.js
 const mongoose = require("mongoose");
 
-const CONTRACT_SOURCE_TYPES = ["job", "gig"];
+const CONTRACT_SOURCE_TYPES = ["job", "gig", "service"];
 const CONTRACT_STATUSES = ["active", "completed", "cancelled"];
 const MILESTONE_STATUSES = [
   "pending", // unfunded
@@ -38,6 +38,21 @@ const deliverySchema = new mongoose.Schema(
   { _id: false }
 );
 
+const servicePackageSnapshotSchema = new mongoose.Schema(
+  {
+    serviceName: { type: String, required: true, trim: true },
+    packageName: { type: String, required: true, trim: true },
+    title: { type: String, required: true, trim: true },
+    description: { type: String, trim: true },
+    price: { type: Number, required: true, min: 0 },
+    currency: { type: String, required: true, enum: ["USD", "SAR", "AED", "BHD"] },
+    deliveryDays: { type: Number, required: true, min: 1 },
+    revisions: { type: Number, required: true, min: 0 },
+    features: [{ type: String, trim: true }],
+  },
+  { _id: false },
+);
+
 // Milestones live embedded inside the Contract document (always loaded
 // together, bounded size) — per the spec's ERD, not a separate collection.
 const milestoneSchema = new mongoose.Schema(
@@ -64,9 +79,9 @@ const milestoneSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// F-CON-01: a contract comes from either a job+proposal (Upwork style)
-// or a gig+tier (Fiverr style). The conditional `required` functions make
-// the right pair mandatory for each source type.
+// F-CON-01: a contract comes from a job+proposal, a legacy gig+tier, or a
+// marketplace service+package. Conditional requirements keep each source
+// internally complete while preserving older gig records.
 const sourceSchema = new mongoose.Schema(
   {
     type: {
@@ -96,9 +111,29 @@ const sourceSchema = new mongoose.Schema(
       },
     },
     tier: {
-      type: String, // 'basic' | 'standard' | 'premium'
+      type: String,
       required: function () {
         return this.type === "gig";
+      },
+    },
+    service: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Service",
+      required: function () {
+        return this.type === "service";
+      },
+    },
+    package: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Package",
+      required: function () {
+        return this.type === "service";
+      },
+    },
+    packageSnapshot: {
+      type: servicePackageSnapshotSchema,
+      required: function () {
+        return this.type === "service";
       },
     },
   },
@@ -143,6 +178,10 @@ const contractSchema = new mongoose.Schema(
       default: "active",
       index: true,
     },
+    // Successful service checkouts use a hashed key for replay-safe creation.
+    // Both fields are private API internals and never expose card data.
+    orderReference: { type: String, unique: true, sparse: true, select: false },
+    orderRequestHash: { type: String, select: false },
     milestones: {
       type: [milestoneSchema],
       validate: {
@@ -170,5 +209,6 @@ const contractSchema = new mongoose.Schema(
 contractSchema.index({ client: 1, status: 1 });
 contractSchema.index({ freelancer: 1, status: 1 });
 contractSchema.index({ "source.job": 1 });
+contractSchema.index({ "source.service": 1 });
 
 module.exports = mongoose.model("Contract", contractSchema);

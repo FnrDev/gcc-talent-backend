@@ -291,6 +291,7 @@ domain is verified.
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
 | `POST` | `/uploads` | Upload one attachment to Cloudflare R2 and return its file metadata and public URL. | Authenticated |
+| `POST` | `/uploads?purpose=service-image` | Upload one public service image and return signed metadata for service creation. | Authenticated |
 
 Send `multipart/form-data` with one file in the `attachment` field. Files are limited to 10 MB and
 must be a supported image, PDF, plain-text/CSV, Microsoft Office, or ZIP attachment.
@@ -299,6 +300,13 @@ The response's `data.attachment` object contains `url`, `name`, `size`, and `con
 `url`, `name`, and `size` into public job attachments. Proposal and delivery schemas currently store
 only `url` and `name`, but confidential files in those records must use a private, authorized
 download flow rather than this public-URL endpoint.
+Use `purpose=service-image` for service galleries. That mode only accepts GIF, JPEG, PNG, and WebP,
+checks that the file signature matches its declared image type, stores the object with inline
+public-cache headers, and adds a signed `receipt` to the returned
+attachment metadata. Service creation accepts up to five ordered image objects and verifies each
+receipt against the authenticated freelancer before storing the public metadata; the first image
+becomes the marketplace cover. Files uploaded for an unfinished service remain in R2, so clients
+should retain confirmed upload metadata when retrying rather than uploading it again.
 Uploads are limited to 30 requests per authenticated account per 15 minutes. This limiter uses
 process-local memory; configure a shared store when running more than one API instance.
 
@@ -306,6 +314,10 @@ process-local memory; configure a shared store when running more than one API in
 curl -X POST http://localhost:3000/uploads \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -F "attachment=@./job-brief.pdf"
+
+curl -X POST 'http://localhost:3000/uploads?purpose=service-image' \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "attachment=@./service-cover.png"
 ```
 
 ### Jobs
@@ -403,7 +415,33 @@ curl -X POST http://localhost:3000/uploads \
 | `GET` | `/services?search={query}&deliveryDays={days}&sort={sort}&page={page}&limit={limit}` | Browse active freelancer services with their active packages. | Public |
 | `GET` | `/services/{serviceId}` | Return one service with its freelancer and active packages. | Public |
 | `GET` | `/services/{serviceId}/similar?limit={limit}` | Return more services from the same freelancer. | Public |
-| `POST` | `/services` | Create a named service from one or more active packages owned by the current freelancer. | Freelancer |
+| `POST` | `/services` | Create a named service from owned active packages and up to five ordered uploaded images. | Freelancer |
+| `POST` | `/services/{serviceId}/orders` | Run the demo-card checkout and create a funded service contract. Requires `Idempotency-Key`. | Client |
+
+Service ordering is a **mock checkout** and does not contact a card network or charge real money.
+It defaults to enabled outside production and disabled in production; set
+`MOCK_SERVICE_CHECKOUT_ENABLED=true` only where demo-funded contracts are acceptable. Send only the
+selected `packageId` and demo payment fields—the API always loads price, currency, scope, and
+delivery from the stored package. Use `4242 4242 4242 4242` for success and
+`4000 0000 0000 0002` for a deterministic `402 MOCK_CARD_DECLINED` response. Do not enter real card
+details. Full card numbers and CVC values are validated transiently and are never stored, returned,
+or written to audit logs.
+
+```bash
+curl -X POST http://localhost:3000/services/SERVICE_ID/orders \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Idempotency-Key: 6ee05ad1-60f7-4926-a89a-9f92e38569a4" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "packageId": "PACKAGE_ID",
+    "payment": {
+      "cardholderName": "Demo Client",
+      "cardNumber": "4242 4242 4242 4242",
+      "expiry": "12/30",
+      "cvc": "123"
+    }
+  }'
+```
 
 ### Administration
 
@@ -425,7 +463,13 @@ curl -X POST http://localhost:3000/uploads \
 | `GET` | `/admin/skills/{skillId}` | Return one skill and its category. | Admin |
 | `PATCH` | `/admin/skills/{skillId}` | Update a skill's name or category. | Admin |
 | `DELETE` | `/admin/skills/{skillId}` | Delete a skill from the master list. | Admin |
-| `POST` | `/admin/seed` | Populate development/demo data. This route must be disabled in production. | Development admin |
+
+### Development seed data
+
+Run `npm run seed:featured` to create or update the three demo freelancers, their profiles,
+packages, and services used by the landing page's **Featured Freelancers & Services** section.
+The command is idempotent, never deletes existing records, and refuses production or non-local
+MongoDB targets.
 
 Wallet and escrow mutation routes must run atomically and accept an `Idempotency-Key` header so a
 retried request cannot deposit, fund, release, refund, or withdraw money more than once. Contract

@@ -26,6 +26,12 @@ const transactionSchema = new mongoose.Schema(
       ref: "Contract",
       index: true,
     },
+    // Milestones are embedded in Contract, so this stores their ObjectId
+    // without a separate collection reference.
+    milestoneId: {
+      type: mongoose.Schema.Types.ObjectId,
+      index: true,
+    },
     type: {
       type: String,
       enum: TRANSACTION_TYPES,
