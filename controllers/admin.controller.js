@@ -6,6 +6,7 @@ const {
   Category,
   Skill,
 } = require("../models");
+const { recordAuditLog } = require("../services/audit.service");
 
 const USER_ROLES = ["client", "freelancer", "admin"];
 const USER_STATUSES = ["active", "suspended"];
@@ -417,6 +418,12 @@ async function updateUser(req, res) {
     );
 
     if (!user) return res.status(404).json({ message: "User not found." });
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "User",
+      resourceId: user._id,
+      details: { operation: "updateUser", changes: updates },
+    });
     return res.status(200).json({ message: "User updated.", user });
   } catch (err) {
     return handleError(res, err);
@@ -451,7 +458,14 @@ async function deleteUser(req, res) {
       });
     }
 
-    await user.deleteOne();
+    const deleted = await user.deleteOne();
+    await recordAuditLog(req, {
+      action: "delete",
+      resource: "User",
+      resourceId: user._id,
+      affectedCount: deleted.deletedCount,
+      details: { operation: "deleteUser" },
+    });
     return res.status(200).json({ message: "User deleted." });
   } catch (err) {
     return handleError(res, err);
@@ -489,6 +503,12 @@ async function createCategory(req, res) {
     if (!slug) return res.status(400).json({ message: "A valid category slug is required." });
 
     const category = await Category.create({ name, slug });
+    await recordAuditLog(req, {
+      action: "create",
+      resource: "Category",
+      resourceId: category._id,
+      details: { operation: "createCategory", name, slug },
+    });
     return res.status(201).json({ message: "Category created.", category });
   } catch (err) {
     return handleError(res, err);
@@ -522,6 +542,12 @@ async function updateCategory(req, res) {
     });
 
     if (!category) return res.status(404).json({ message: "Category not found." });
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "Category",
+      resourceId: category._id,
+      details: { operation: "updateCategory", changes: updates },
+    });
     return res.status(200).json({ message: "Category updated.", category });
   } catch (err) {
     return handleError(res, err);
@@ -544,7 +570,14 @@ async function deleteCategory(req, res) {
       });
     }
 
-    await category.deleteOne();
+    const deleted = await category.deleteOne();
+    await recordAuditLog(req, {
+      action: "delete",
+      resource: "Category",
+      resourceId: category._id,
+      affectedCount: deleted.deletedCount,
+      details: { operation: "deleteCategory" },
+    });
     return res.status(200).json({ message: "Category deleted." });
   } catch (err) {
     return handleError(res, err);

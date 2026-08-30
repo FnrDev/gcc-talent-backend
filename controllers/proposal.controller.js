@@ -4,6 +4,7 @@ const Job = require("../models/Job")
 const User = require("../models/User")
 const Contract = require("../models/Contract")
 const FreelancerProfile = require("../models/FreelancerProfile")
+const { recordAuditLog, recordAuditLogs } = require("../services/audit.service")
 
 const PROPOSAL_STATUSES = ["pending", "shortlisted", "accepted", "declined", "withdrawn"]
 
@@ -156,7 +157,25 @@ async function submitProposal(req, res) {
             attachments: attachments || [],
         }], { session })
 
-        await Job.updateOne({ _id: job._id }, { $inc: { proposalsCount: 1 } }, { session })
+        const jobUpdate = await Job.updateOne({ _id: job._id }, { $inc: { proposalsCount: 1 } }, { session })
+
+        const auditEntries = [{
+            action: "create",
+            resource: "Proposal",
+            resourceId: proposal._id,
+            details: { operation: "submitProposal", jobId: job._id, freelancerId: proposal.freelancer, status: proposal.status },
+        }]
+
+        if (jobUpdate.modifiedCount > 0) {
+            auditEntries.push({
+                action: "update",
+                resource: "Job",
+                resourceId: job._id,
+                details: { operation: "submitProposal", proposalId: proposal._id, changedFields: ["proposalsCount"], proposalsCountDelta: 1 },
+            })
+        }
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 
@@ -270,7 +289,17 @@ async function updateProposal(req, res) {
 
         proposal.coverLetter = proposal.coverLetter.trim()
 
+        const changedFields = allowedFields.filter((field) => proposal.isModified(field))
         await proposal.save()
+
+        if (changedFields.length > 0) {
+            await recordAuditLog(req, {
+                action: "update",
+                resource: "Proposal",
+                resourceId: proposal._id,
+                details: { operation: "updateProposal", jobId: proposal.job, changedFields },
+            })
+        }
 
         return res.status(200).json({ success: true, message: "Proposal updated successfully.", data: { proposal } })
 
@@ -299,7 +328,25 @@ async function withdrawProposal(req, res) {
 
         await proposal.save({ session })
 
-        await Job.updateOne({ _id: proposal.job, proposalsCount: { $gt: 0 } }, { $inc: { proposalsCount: -1 } }, { session })
+        const jobUpdate = await Job.updateOne({ _id: proposal.job, proposalsCount: { $gt: 0 } }, { $inc: { proposalsCount: -1 } }, { session })
+
+        const auditEntries = [{
+            action: "update",
+            resource: "Proposal",
+            resourceId: proposal._id,
+            details: { operation: "withdrawProposal", jobId: proposal.job, previousStatus: "pending", status: proposal.status },
+        }]
+
+        if (jobUpdate.modifiedCount > 0) {
+            auditEntries.push({
+                action: "update",
+                resource: "Job",
+                resourceId: proposal.job,
+                details: { operation: "withdrawProposal", proposalId: proposal._id, changedFields: ["proposalsCount"], proposalsCountDelta: -1 },
+            })
+        }
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 
@@ -405,6 +452,7 @@ async function updateProposalStatus(req, res) {
             return res.status(422).json({ success: false, message: "Only pending or shortlisted proposals can be declined." })
         }
 
+        const previousStatus = proposal.status
         proposal.status = status
 
         if (status === "declined") {
@@ -412,6 +460,13 @@ async function updateProposalStatus(req, res) {
         }
 
         await proposal.save()
+
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Proposal",
+            resourceId: proposal._id,
+            details: { operation: "updateProposalStatus", jobId: proposal.job, previousStatus, status: proposal.status },
+        })
 
         return res.status(200).json({ success: true, message: status === "shortlisted" ? "Proposal shortlisted successfully." : "Proposal declined successfully.", data: { proposal } })
 
@@ -502,13 +557,14 @@ async function acceptProposal(req, res) {
             startedAt: new Date(),
         }], { session })
 
+        const previousProposalStatus = proposal.status
         proposal.status = "accepted"
         await proposal.save({ session })
 
         job.status = "in_progress"
         await job.save({ session })
 
-        await Proposal.updateMany(
+        const declinedProposals = await Proposal.updateMany(
             {
                 job: job._id,
                 _id: { $ne: proposal._id },
@@ -522,6 +578,41 @@ async function acceptProposal(req, res) {
             },
             { session }
         )
+
+        const auditEntries = [{
+            action: "create",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "acceptProposal", jobId: job._id, proposalId: proposal._id, status: contract.status },
+        }, {
+            action: "update",
+            resource: "Proposal",
+            resourceId: proposal._id,
+            details: { operation: "acceptProposal", jobId: job._id, contractId: contract._id, previousStatus: previousProposalStatus, status: proposal.status },
+        }, {
+            action: "update",
+            resource: "Job",
+            resourceId: job._id,
+            details: { operation: "acceptProposal", contractId: contract._id, previousStatus: "open", status: job.status },
+        }]
+
+        if (declinedProposals.modifiedCount > 0) {
+            auditEntries.push({
+                action: "update",
+                resource: "Proposal",
+                affectedCount: declinedProposals.modifiedCount,
+                details: {
+                    operation: "acceptProposal",
+                    jobId: job._id,
+                    excludedProposalId: proposal._id,
+                    previousStatuses: ["pending", "shortlisted"],
+                    status: "declined",
+                    reason: "another_proposal_accepted",
+                },
+            })
+        }
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 

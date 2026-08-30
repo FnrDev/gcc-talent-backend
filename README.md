@@ -78,6 +78,70 @@ Missing or invalid email configuration makes registration return
 
 ![alt text](erd.png)
 
+### Audit logs
+
+The `AuditLog` model stores create, update, and delete events in MongoDB's `audit_logs`
+collection. All existing mutation controllers use the shared `services/audit.service.js`
+logger: accounts/authentication, both profile types, users/admin, categories, skills, jobs,
+proposals, contracts/milestones, reviews, wallets, and financial ledger entries. Read-only
+controllers do not create audit records. This records new changes; it does not backfill history.
+
+Each entry includes:
+
+- `actor`: the initiating user's ID, or `null` for anonymous requests; `actorType` distinguishes
+  `user`, `anonymous`, and `system`. Password-reset requests remain anonymous even when their
+  email matches an account. Verified reset/verification tokens and successful logins can identify
+  the acting user. IDs remain in the log after an account or resource is deleted.
+- `action`: `create`, `update`, or `delete`; `resource` is the Mongoose model name and
+  `resourceId` is the affected document ID. Embedded milestone/delivery changes are Contract
+  updates. Bulk proposal declines use a null resource ID, an `affectedCount`, and a scoped filter
+  in `details` rather than pretending one document represents the entire batch.
+- `details`: a controller operation name and curated changed fields or relevant values.
+  It is not a complete before/after snapshot. Credentials, passwords, tokens and hashes are
+  never passed by controllers; sensitive keys are defensively redacted and details are size-limited.
+- `request`: a server-generated correlation `id`, HTTP `method`, route `path`, and `ip`.
+  Related/cascading writes share an ID. Query strings, request bodies and headers are not stored.
+- `createdAt`: when the audit entry was created. Indexes support time, actor, resource, action,
+  and request-ID lookups. There is no automatic expiration or public audit read/write endpoint.
+
+Administrators can read logs at `GET /admin/audit-logs`; the frontend exposes this under
+**Admin → Audit logs** (`/admin?section=audit-logs`). This endpoint uses the existing live
+admin authorization and never writes audit entries. It supports `page`, `limit` (up to 100),
+`action`, `resource`, exact `actor`/`resourceId` filters, `search` (operation, endpoint, or exact
+IDs), and `from`/`to` ISO timestamp bounds. Results use `{ logs, pagination }`, newest first
+with an ID tie-breaker. Each row retains its original `actor` ID and adds a minimal
+`actorUser: { _id, name, email }` summary when that account still exists. Deleted actors
+remain identifiable by their recorded ID. Invalid filters return `400`.
+
+Audit inserts are awaited after actual persistence, including background password-reset changes
+and compensating updates when email delivery or a wallet operation fails. Rejected requests and
+conditional writes that change nothing do not produce success events. Existing MongoDB transactions
+pass the same session to the audit insert, so an aborted transaction leaves no audit rows and an
+audit failure aborts the transaction. For non-transactional operations, the business write and audit
+insert are not atomic: audit failures are reported to the server error log without turning an
+already-completed write into a retryable HTTP failure. Monitor `Audit log persistence failed.`;
+there is no automatic retry/outbox for those failures.
+
+For a new mutation handler, call the logger immediately after the successful write and before
+response population or other fallible follow-up work. Supply the existing session when applicable:
+
+```js
+const { recordAuditLog } = require("../services/audit.service");
+
+await recordAuditLog(req, {
+  action: "update",
+  resource: "Job",
+  resourceId: job._id,
+  details: { operation: "updateMyJob", changedFields: ["title"] },
+  // session, // Include when the business write is inside a transaction.
+});
+```
+
+Use `recordAuditLogs(req, entries, { session })` for related mutations, passing each created
+document's own ID. Use `affectedCount: result.modifiedCount` or `result.deletedCount` for
+conditional writes; zero-count entries are skipped. Logs can be queried through `AuditLog`
+or directly in MongoDB, for example `db.audit_logs.find({ resource: "Job" }).sort({ createdAt: -1 })`.
+
 
 ## Routes
 
@@ -294,6 +358,7 @@ domain is verified.
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
 | `GET` | `/admin/stats` | Return users by role, 7/30-day sign-ups, open jobs, active contracts, GMV, platform revenue, and a 30-day sign-up series. | Admin |
+| `GET` | `/admin/audit-logs` | Filter and paginate read-only audit history, with minimal actor details and preserved IDs for deleted users. | Admin |
 | `GET` | `/admin/users?search={query}&role={role}&status={status}&page={page}&limit={limit}` | Search, filter, sort, and paginate users. | Admin |
 | `GET` | `/admin/users/{userId}` | Return one user's account summary, contracts, and transactions. | Admin |
 | `PATCH` | `/admin/users/{userId}` | Update a user's status, email-verification flag, or role. | Admin |

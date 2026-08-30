@@ -3,6 +3,7 @@ const Job = require("../models/Job")
 const User = require("../models/User")
 const Category = require("../models/Category")
 const Skill = require("../models/Skill")
+const { recordAuditLog } = require("../services/audit.service")
 
 const JOB_BUDGET_TYPES = ["fixed", "hourly"]
 const JOB_EXPERIENCE_LEVELS = ["entry", "intermediate", "expert"]
@@ -177,6 +178,13 @@ async function createJob(req, res) {
             duration,
             attachments: attachments || [],
             deadline,
+        })
+
+        await recordAuditLog(req, {
+            action: "create",
+            resource: "Job",
+            resourceId: job._id,
+            details: { operation: "createJob", clientId: job.client, status: job.status },
         })
 
         const populatedJob = await Job.findById(job._id)
@@ -491,7 +499,17 @@ async function updateMyJob(req, res) {
             job.description = job.description.trim()
         }
 
+        const changedFields = allowedFields.filter((field) => job.isModified(field))
         await job.save()
+
+        if (changedFields.length > 0) {
+            await recordAuditLog(req, {
+                action: "update",
+                resource: "Job",
+                resourceId: job._id,
+                details: { operation: "updateMyJob", changedFields },
+            })
+        }
 
         const updatedJob = await Job.findById(job._id)
             .populate("category", "name slug")
@@ -542,6 +560,13 @@ async function publishJob(req, res) {
         job.status = "open"
         await job.save()
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Job",
+            resourceId: job._id,
+            details: { operation: "publishJob", previousStatus: "draft", status: job.status },
+        })
+
         return res.status(200).json({
             success: true,
             message: "Job published successfully.",
@@ -568,6 +593,13 @@ async function closeJob(req, res) {
 
         job.status = "closed"
         await job.save()
+
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Job",
+            resourceId: job._id,
+            details: { operation: "closeJob", previousStatus: "open", status: job.status },
+        })
 
         return res.status(200).json({ success: true, message: "Job closed successfully.", data: { job } })
 
@@ -596,6 +628,13 @@ async function reopenJob(req, res) {
 
         await job.save()
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Job",
+            resourceId: job._id,
+            details: { operation: "reopenJob", previousStatus: "closed", status: job.status },
+        })
+
         return res.status(200).json({success: true, message: "Job reopened successfully.", data: { job }})
 
     } catch (err) {
@@ -619,7 +658,16 @@ async function deleteMyJob(req, res) {
             return res.status(409).json({ success: false, message: "A job with proposals cannot be deleted." })
         }
 
-        await job.deleteOne()
+        const deletion = await job.deleteOne()
+
+        if (deletion.deletedCount > 0) {
+            await recordAuditLog(req, {
+                action: "delete",
+                resource: "Job",
+                resourceId: job._id,
+                details: { operation: "deleteMyJob", status: job.status },
+            })
+        }
         return res.status(200).json({ success: true, message: "Job deleted successfully." })
 
     } catch (err) {

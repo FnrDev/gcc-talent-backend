@@ -3,6 +3,7 @@ const Contract = require("../models/Contract")
 const User = require("../models/User")
 const Transaction = require("../models/Transaction")
 const Job = require("../models/Job")
+const { recordAuditLog, recordAuditLogs } = require("../services/audit.service")
 
 const CONTRACT_STATUSES = ["active", "completed", "cancelled"]
 
@@ -28,6 +29,24 @@ function handleError(res, err) {
 
 function roundMoney(amount) {
     return Math.round((amount + Number.EPSILON) * 100) / 100
+}
+
+function transactionAuditEntry(transaction, operation) {
+    return {
+        action: "create",
+        resource: "Transaction",
+        resourceId: transaction._id,
+        details: {
+            operation,
+            userId: transaction.user,
+            contractId: transaction.contract,
+            milestoneId: transaction.milestoneId,
+            type: transaction.type,
+            amount: transaction.amount,
+            direction: transaction.direction,
+            status: transaction.status,
+        },
+    }
 }
 
 function getMilestone(contract, milestoneId) {
@@ -208,6 +227,13 @@ async function addMilestone(req, res) {
 
         const milestone = contract.milestones[contract.milestones.length - 1]
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "addMilestone", milestoneId: milestone._id, amount: milestone.amount, totalAmount: contract.totalAmount, changedFields: ["milestones", "totalAmount", "activity"] },
+        })
+
         return res.status(201).json({ success: true, message: "Milestone added successfully.", data: { milestone, totalAmount: contract.totalAmount } })
 
     } catch (err) {
@@ -302,6 +328,20 @@ async function updateMilestone(req, res) {
 
         await contract.save()
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: {
+                operation: "updateMilestone",
+                milestoneId: milestone._id,
+                previousAmount,
+                amount: milestone.amount,
+                totalAmount: contract.totalAmount,
+                changedFields: ["milestones", "totalAmount", "activity"],
+            },
+        })
+
         return res.status(200).json({ success: true, message: "Milestone updated successfully.", data: { milestone, totalAmount: contract.totalAmount } })
 
     } catch (err) {
@@ -376,10 +416,11 @@ async function fundMilestone(req, res) {
             at: new Date(),
         })
 
+        const walletChanged = user.isModified("wallet.available")
         await user.save({ session })
         await contract.save({ session })
 
-        await Transaction.create([{
+        const [transaction] = await Transaction.create([{
             user: user._id,
             contract: contract._id,
             milestoneId: milestone._id,
@@ -389,6 +430,24 @@ async function fundMilestone(req, res) {
             status: "completed",
             reference: `escrow-fund:${contract._id}:${milestone._id}`,
         }], { session })
+
+        const auditEntries = [{
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "fundMilestone", milestoneId: milestone._id, previousStatus: "pending", status: milestone.status, escrowAmount: amount, changedFields: ["milestones", "activity"] },
+        }, transactionAuditEntry(transaction, "fundMilestone")]
+
+        if (walletChanged) {
+            auditEntries.push({
+                action: "update",
+                resource: "User",
+                resourceId: user._id,
+                details: { operation: "fundMilestone", contractId: contract._id, milestoneId: milestone._id, changedFields: ["wallet.available"], availableBalanceDelta: -amount },
+            })
+        }
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 
@@ -453,6 +512,13 @@ async function startMilestone(req, res) {
 
         await contract.save()
 
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "startMilestone", milestoneId: milestone._id, previousStatus: "funded", status: milestone.status, changedFields: ["milestones", "activity"] },
+        })
+
         return res.status(200).json({ success: true, message: "Milestone started successfully.", data: { milestone } })
 
     } catch (err) {
@@ -510,6 +576,7 @@ async function deliverMilestone(req, res) {
             return res.status(400).json({ success: false, message: "Attachments must be an array." })
         }
 
+        const previousStatus = milestone.status
         milestone.deliveries.push({
             message: message.trim(),
             attachments: attachments || [],
@@ -529,6 +596,13 @@ async function deliverMilestone(req, res) {
         await contract.save()
 
         const delivery = milestone.deliveries[milestone.deliveries.length - 1]
+
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "deliverMilestone", milestoneId: milestone._id, deliveryIndex: milestone.deliveries.length - 1, previousStatus, status: milestone.status, changedFields: ["milestones", "activity"] },
+        })
 
         return res.status(200).json({ success: true, message: "Milestone delivered successfully.", data: { milestone, delivery } })
 
@@ -599,6 +673,13 @@ async function requestRevision(req, res) {
         })
 
         await contract.save()
+
+        await recordAuditLog(req, {
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "requestRevision", milestoneId: milestone._id, deliveryIndex: milestone.deliveries.length - 1, previousStatus: "delivered", status: milestone.status, changedFields: ["milestones", "activity"] },
+        })
 
         return res.status(200).json({ success: true, message: "Revision requested successfully.", data: { milestone } })
 
@@ -691,6 +772,7 @@ async function approveMilestone(req, res) {
         })
 
         const allMilestonesApproved = contract.milestones.every((item) => item.status === "approved")
+        const auditEntries = []
 
         if (allMilestonesApproved) {
             contract.status = "completed"
@@ -704,12 +786,46 @@ async function approveMilestone(req, res) {
             })
 
             if (contract.source?.type === "job" && contract.source?.job) {
-                await Job.updateOne({ _id: contract.source.job }, { $set: { status: "completed" } }, { session })
+                const jobUpdate = await Job.updateOne({ _id: contract.source.job }, { $set: { status: "completed" } }, { session })
+
+                if (jobUpdate.modifiedCount > 0) {
+                    auditEntries.push({
+                        action: "update",
+                        resource: "Job",
+                        resourceId: contract.source.job,
+                        details: { operation: "approveMilestone", contractId: contract._id, status: "completed", changedFields: ["status"] },
+                    })
+                }
             }
         }
 
+        const walletChanged = freelancer.isModified("wallet.available")
         await freelancer.save({ session })
         await contract.save({ session })
+
+        if (walletChanged) {
+            auditEntries.push({
+                action: "update",
+                resource: "User",
+                resourceId: freelancer._id,
+                details: { operation: "approveMilestone", contractId: contract._id, milestoneId: milestone._id, changedFields: ["wallet.available"], availableBalanceDelta: freelancerAmount },
+            })
+        }
+
+        auditEntries.push({
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: {
+                operation: "approveMilestone",
+                milestoneId: milestone._id,
+                milestoneStatus: milestone.status,
+                status: contract.status,
+                releasedAmount: escrowAmount,
+                platformFee,
+                changedFields: allMilestonesApproved ? ["milestones", "activity", "status", "completedAt"] : ["milestones", "activity"],
+            },
+        })
 
         const transactions = [{
             user: freelancer._id,
@@ -735,7 +851,10 @@ async function approveMilestone(req, res) {
             })
         }
 
-        await Transaction.insertMany(transactions, { session })
+        const createdTransactions = await Transaction.insertMany(transactions, { session })
+        auditEntries.push(...createdTransactions.map((transaction) => transactionAuditEntry(transaction, "approveMilestone")))
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 
@@ -804,6 +923,7 @@ async function cancelContract(req, res) {
 
         let refundTotal = 0
         const refundTransactions = []
+        const auditEntries = []
 
         for (const milestone of contract.milestones) {
             if (milestone.status === "pending") {
@@ -834,7 +954,14 @@ async function cancelContract(req, res) {
         if (refundTotal > 0) {
             client.wallet.available = roundMoney(client.wallet.available + refundTotal)
             await client.save({ session })
-            await Transaction.insertMany(refundTransactions, { session })
+            const createdTransactions = await Transaction.insertMany(refundTransactions, { session })
+
+            auditEntries.push({
+                action: "update",
+                resource: "User",
+                resourceId: client._id,
+                details: { operation: "cancelContract", contractId: contract._id, changedFields: ["wallet.available"], availableBalanceDelta: refundTotal },
+            }, ...createdTransactions.map((transaction) => transactionAuditEntry(transaction, "cancelContract")))
         }
 
         contract.status = "cancelled"
@@ -847,6 +974,15 @@ async function cancelContract(req, res) {
         })
 
         await contract.save({ session })
+
+        auditEntries.push({
+            action: "update",
+            resource: "Contract",
+            resourceId: contract._id,
+            details: { operation: "cancelContract", previousStatus: "active", status: contract.status, refundedAmount: refundTotal, changedFields: ["milestones", "status", "activity"] },
+        })
+
+        await recordAuditLogs(req, auditEntries, { session })
 
         await session.commitTransaction()
 

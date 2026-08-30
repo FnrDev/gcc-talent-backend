@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Skill = require("../models/Skill");
 const Category = require("../models/Category");
+const { recordAuditLog } = require("../services/audit.service");
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -107,6 +108,12 @@ async function createSkill(req, res) {
     if (!categoryExists) return res.status(404).json({ message: "Category not found." });
 
     const skill = await Skill.create({ name, category });
+    await recordAuditLog(req, {
+      action: "create",
+      resource: "Skill",
+      resourceId: skill._id,
+      details: { operation: "createSkill", name, category },
+    });
     await skill.populate("category", "name slug");
 
     return res.status(201).json({ message: "Skill created.", skill });
@@ -143,9 +150,16 @@ async function updateSkill(req, res) {
     const skill = await Skill.findByIdAndUpdate(req.params.id, updates, {
       new: true,
       runValidators: true,
-    }).populate("category", "name slug");
+    });
 
     if (!skill) return res.status(404).json({ message: "Skill not found." });
+    await recordAuditLog(req, {
+      action: "update",
+      resource: "Skill",
+      resourceId: skill._id,
+      details: { operation: "updateSkill", changes: updates },
+    });
+    await skill.populate("category", "name slug");
     return res.status(200).json({ message: "Skill updated.", skill });
   } catch (err) {
     return handleError(res, err);
@@ -157,6 +171,12 @@ async function deleteSkill(req, res) {
     const skill = await Skill.findByIdAndDelete(req.params.id);
 
     if (!skill) return res.status(404).json({ message: "Skill not found." });
+    await recordAuditLog(req, {
+      action: "delete",
+      resource: "Skill",
+      resourceId: skill._id,
+      details: { operation: "deleteSkill" },
+    });
     return res.status(200).json({ message: "Skill deleted." });
   } catch (err) {
     return handleError(res, err);

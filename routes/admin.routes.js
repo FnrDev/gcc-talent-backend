@@ -1,13 +1,19 @@
 const router = require("express").Router();
 const adminController = require("../controllers/admin.controller");
+const auditController = require("../controllers/audit.controller");
 const skillController = require("../controllers/skill.controller");
 const verifyToken = require("../middleware/verifyToken");
 const requireAdmin = require("../middleware/requireAdmin");
 const validateObjectId = require("../middleware/validateObjectId");
 
+router.use("/audit-logs", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 router.use(verifyToken, requireAdmin);
 
 router.get("/stats", adminController.getStatistics);
+router.get("/audit-logs", auditController.getAuditLogs);
 
 router.get("/users", adminController.getUsers);
 router.get("/users/:id", validateObjectId, adminController.getUser);

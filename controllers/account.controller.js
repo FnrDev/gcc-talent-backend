@@ -1,6 +1,7 @@
 const bcrypt = require("bcrypt");
 const User = require('../models/User')
 const { getTokenVersion, tokenVersionFilter } = require("../services/session.service");
+const { recordAuditLog } = require("../services/audit.service");
 
 async function changePassword(req, res) {
   try {
@@ -50,6 +51,15 @@ async function changePassword(req, res) {
       return res.status(401).json({ success: false, message: "Your credentials changed. Please sign in again." });
     }
 
+    if (updated.modifiedCount > 0) {
+      await recordAuditLog(req, {
+        action: "update",
+        resource: "User",
+        resourceId: user._id,
+        details: { operation: "changePassword", changedFields: ["credentials", "sessions", "recovery"] },
+      });
+    }
+
     res.clearCookie("refreshToken", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -83,7 +93,16 @@ async function updatePreferences(req, res) {
       user.notificationPrefs.email = email;
     }
 
+    const preferencesChanged = user.isModified("notificationPrefs.email");
     await user.save();
+    if (preferencesChanged) {
+      await recordAuditLog(req, {
+        action: "update",
+        resource: "User",
+        resourceId: user._id,
+        details: { operation: "updatePreferences", changedFields: ["notificationPrefs.email"] },
+      });
+    }
 
     return res.status(200).json({
       success: true,
