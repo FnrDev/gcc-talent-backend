@@ -400,6 +400,9 @@ curl -X POST http://localhost:3000/uploads \
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
+| `GET` | `/services?search={query}&deliveryDays={days}&sort={sort}&page={page}&limit={limit}` | Browse active freelancer services with their active packages. | Public |
+| `GET` | `/services/{serviceId}` | Return one service with its freelancer and active packages. | Public |
+| `GET` | `/services/{serviceId}/similar?limit={limit}` | Return more services from the same freelancer. | Public |
 | `POST` | `/services` | Create a named service from one or more active packages owned by the current freelancer. | Freelancer |
 
 ### Administration
