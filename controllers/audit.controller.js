@@ -94,6 +94,7 @@ function parseQuery(query) {
       const pattern = new RegExp(escapeRegExp(search), "i");
       filter.$or = [
         { "details.operation": pattern },
+        { "details.key": pattern },
         { "request.path": pattern },
         { "request.id": search },
       ];
