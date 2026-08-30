@@ -53,6 +53,15 @@ const passwordResetLimiter = rateLimit({
   message: { success: false, message: "Too many password reset attempts. Please try again later." },
 });
 
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => String(req.user._id),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many attachment uploads. Please try again later." },
+});
+
 
 module.exports = {
   authLimiter,
@@ -60,4 +69,5 @@ module.exports = {
   verificationEmailLimiter,
   passwordResetRequestLimiter,
   passwordResetLimiter,
+  uploadLimiter,
 }

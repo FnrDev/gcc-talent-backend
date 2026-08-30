@@ -21,7 +21,7 @@ Follow these steps to set up and run the backend locally.
  
 ### Prerequisites
  
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- [Node.js](https://nodejs.org/) (v20.19 or higher)
 - npm (comes with Node.js)
 
 ### Steps
@@ -49,6 +49,11 @@ Follow these steps to set up and run the backend locally.
     RESEND_API_KEY=your-resend-api-key
     RESEND_FROM_EMAIL="GCC Talent <noreply@your-domain.com>"
     API_BASE_URL=http://localhost:3000
+    R2_ACCOUNT_ID=your-cloudflare-account-id
+    R2_ACCESS_KEY_ID=your-r2-access-key-id
+    R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+    R2_JURISDICTION=default
+    R2_PUBLIC_BASE_URL=https://files.your-domain.com
 ```
 
 Use a real Resend sending key and an address on a [verified Resend domain](https://resend.com/docs/dashboard/domains/introduction).
@@ -58,6 +63,19 @@ base path. Production requires this setting to use HTTPS; localhost links only w
 `CLIENT_URL` is the frontend base URL used for CORS and password reset links. Use a public HTTPS URL in production.
 Missing or invalid email configuration makes registration return
 `503` before creating an account.
+
+Attachment uploads use the Cloudflare R2 bucket named `gcc-talent`. Create an R2 API token with
+Object Read & Write access scoped to that bucket. Keep both R2 credentials in `.env` or deployment
+secrets, never in frontend code. `R2_PUBLIC_BASE_URL` must be the bucket's public custom-domain origin
+in production. Cloudflare's generated `r2.dev` URL can be used for development after public access is
+enabled, but it is rate-limited and not intended for production. The S3 API endpoint is not a public
+file URL. Set `R2_JURISDICTION` to `eu`, `us`, or `fedramp` only when the bucket was created in that
+jurisdiction; otherwise keep `default`.
+
+`R2_PUBLIC_BASE_URL` deliberately makes the returned object URL anonymously readable. Anyone who
+obtains that URL can download the attachment; `Cache-Control: no-store` does not provide access
+control. Do not use this public URL flow for confidential resumes, proposals, or work product. Those
+need a private bucket plus an authenticated download endpoint or short-lived presigned GET URLs.
  
 4. **run:**
 ```bash
@@ -83,7 +101,8 @@ Missing or invalid email configuration makes registration return
 The `AuditLog` model stores create, update, and delete events in MongoDB's `audit_logs`
 collection. All existing mutation controllers use the shared `services/audit.service.js`
 logger: accounts/authentication, both profile types, users/admin, categories, skills, jobs,
-proposals, contracts/milestones, reviews, wallets, and financial ledger entries. Read-only
+proposals, contracts/milestones, reviews, wallets, financial ledger entries, and R2 attachment
+uploads. Read-only
 controllers do not create audit records. This records new changes; it does not backfill history.
 
 Each entry includes:
@@ -92,10 +111,12 @@ Each entry includes:
   `user`, `anonymous`, and `system`. Password-reset requests remain anonymous even when their
   email matches an account. Verified reset/verification tokens and successful logins can identify
   the acting user. IDs remain in the log after an account or resource is deleted.
-- `action`: `create`, `update`, or `delete`; `resource` is the Mongoose model name and
-  `resourceId` is the affected document ID. Embedded milestone/delivery changes are Contract
-  updates. Bulk proposal declines use a null resource ID, an `affectedCount`, and a scoped filter
-  in `details` rather than pretending one document represents the entire batch.
+- `action`: `create`, `update`, or `delete`; `resource` is the affected resource type and
+  `resourceId` is the document ID for MongoDB-backed records. Embedded milestone/delivery changes
+  are Contract updates. R2 uploads use resource `Attachment`, a null resource ID, and place their
+  server-generated object key in `details`. Bulk proposal declines use a null resource ID, an
+  `affectedCount`, and a scoped filter in `details` rather than pretending one document represents
+  the entire batch.
 - `details`: a controller operation name and curated changed fields or relevant values.
   It is not a complete before/after snapshot. Credentials, passwords, tokens and hashes are
   never passed by controllers; sensitive keys are defensively redacted and details are size-limited.
@@ -264,6 +285,28 @@ domain is verified.
 | `DELETE` | `/profiles/me/portfolio/{itemId}` | Delete a portfolio item. | Freelancer |
 | `GET` | `/freelancers/{freelancerId}` | Return a public freelancer profile, rating, reviews, and active gigs. | Public |
 | `GET` | `/clients/{clientId}` | Return a public client profile, hiring statistics, jobs, and reviews. | Public |
+
+### Uploads
+
+| Method | Route | Description | Access |
+| --- | --- | --- | --- |
+| `POST` | `/uploads` | Upload one attachment to Cloudflare R2 and return its file metadata and public URL. | Authenticated |
+
+Send `multipart/form-data` with one file in the `attachment` field. Files are limited to 10 MB and
+must be a supported image, PDF, plain-text/CSV, Microsoft Office, or ZIP attachment.
+The declared MIME type is allowlisted, but uploaded content is not virus-scanned or content-inspected.
+The response's `data.attachment` object contains `url`, `name`, `size`, and `contentType`. Map
+`url`, `name`, and `size` into public job attachments. Proposal and delivery schemas currently store
+only `url` and `name`, but confidential files in those records must use a private, authorized
+download flow rather than this public-URL endpoint.
+Uploads are limited to 30 requests per authenticated account per 15 minutes. This limiter uses
+process-local memory; configure a shared store when running more than one API instance.
+
+```bash
+curl -X POST http://localhost:3000/uploads \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "attachment=@./job-brief.pdf"
+```
 
 ### Jobs
 
