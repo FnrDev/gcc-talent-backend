@@ -17,5 +17,6 @@ module.exports = {
   Contract: require("./Contract"),
   Transaction: require("./Transaction"),
   Review: require("./Review"),
-  Package: require("./Package")
+  Package: require("./Package"),
+  Service: require("./Service"),
 };

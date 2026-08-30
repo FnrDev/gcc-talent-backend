@@ -100,7 +100,7 @@ need a private bucket plus an authenticated download endpoint or short-lived pre
 
 The `AuditLog` model stores create, update, and delete events in MongoDB's `audit_logs`
 collection. All existing mutation controllers use the shared `services/audit.service.js`
-logger: accounts/authentication, both profile types, users/admin, categories, skills, jobs,
+logger: accounts/authentication, both profile types, users/admin, categories, skills, services, jobs,
 proposals, contracts/milestones, reviews, wallets, financial ledger entries, and R2 attachment
 uploads. Read-only
 controllers do not create audit records. This records new changes; it does not backfill history.
@@ -395,6 +395,12 @@ curl -X POST http://localhost:3000/uploads \
 | --- | --- | --- | --- |
 | `GET` | `/skills?category={categoryId}&categorySlug={slug}&search={query}` | List available skills, optionally filtered by category or name. | Public |
 | `GET` | `/skills/{skillId}` | Return one skill with its category. | Public |
+
+### Services
+
+| Method | Route | Description | Access |
+| --- | --- | --- | --- |
+| `POST` | `/services` | Create a named service from one or more active packages owned by the current freelancer. | Freelancer |
 
 ### Administration
 

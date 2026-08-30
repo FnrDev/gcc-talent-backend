@@ -19,7 +19,7 @@ const auditLogSchema = new mongoose.Schema(
     action: { type: String, enum: ["create", "update", "delete"], required: true },
     resource: {
       type: String,
-      enum: ["User", "Job", "Proposal", "Contract", "Transaction", "Review", "Category", "Skill", "FreelancerProfile", "ClientProfile", "Attachment"],
+      enum: ["User", "Job", "Proposal", "Contract", "Transaction", "Review", "Category", "Skill", "Service", "FreelancerProfile", "ClientProfile", "Attachment"],
       required: true,
     },
     // Bulk mutations use a null ID, affectedCount, and a scoped details filter.

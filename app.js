@@ -20,6 +20,7 @@ const proposalRoutes = require('./routes/proposal.routes')
 const contractRoutes = require("./routes/contract.routes")
 const reviewRoutes = require("./routes/review.routes")
 const packageRoutes = require('./routes/package.routes')
+const serviceRoutes = require('./routes/service.routes')
 const uploadRoutes = require("./routes/upload.routes")
 
 
@@ -67,6 +68,7 @@ app.use("/contracts", contractRoutes);
 app.use("/uploads", uploadRoutes);
 app.use("/", reviewRoutes);
 app.use("/packages", packageRoutes)
+app.use("/services", serviceRoutes)
 
 
 
