@@ -20,6 +20,7 @@ const proposalSchema = new mongoose.Schema(
     coverLetter: {
       type: String,
       required: true,
+      maxlength: 5000,
     },
     amount: {
       type: Number,
@@ -36,7 +37,8 @@ const proposalSchema = new mongoose.Schema(
     milestones: [
       {
         _id: false,
-        title: { type: String, required: true, trim: true },
+        title: { type: String, required: true, trim: true, maxlength: 200 },
+        description: { type: String, required: true, trim: true, maxlength: 2000 },
         amount: { type: Number, required: true, min: 0 },
         dueDate: { type: Date },
       },
@@ -44,8 +46,8 @@ const proposalSchema = new mongoose.Schema(
     attachments: [
       {
         _id: false,
-        url: { type: String, required: true },
-        name: { type: String, required: true },
+        url: { type: String, required: true, maxlength: 2000 },
+        name: { type: String, required: true, maxlength: 255 },
       },
     ],
     status: {
@@ -58,6 +60,7 @@ const proposalSchema = new mongoose.Schema(
     declineReason: {
       type: String,
       trim: true,
+      maxlength: 500,
     },
   },
   { timestamps: true } // adds createdAt + updatedAt
@@ -65,5 +68,7 @@ const proposalSchema = new mongoose.Schema(
 
 // F-PRO-05 / F-PRO-01: one proposal per freelancer per job.
 proposalSchema.index({ job: 1, freelancer: 1 }, { unique: true });
+proposalSchema.path("milestones").validate((milestones) => milestones.length <= 20, "A proposal can have at most 20 milestones.");
+proposalSchema.path("attachments").validate((attachments) => attachments.length <= 5, "A proposal can have at most 5 attachments.");
 
 module.exports = mongoose.model("Proposal", proposalSchema);

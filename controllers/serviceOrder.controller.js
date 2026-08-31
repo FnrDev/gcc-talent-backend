@@ -13,7 +13,7 @@ const DECLINED_TEST_CARD = "4000000000000002";
 const PAYMENT_MODE = "mock";
 
 function roundMoney(amount) {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
+  return Math.round((amount + Number.EPSILON) * 1000) / 1000;
 }
 
 function mockCheckoutEnabled() {
@@ -594,6 +594,13 @@ async function createServiceOrder(req, res) {
     ]);
     if (!packageItem) {
       return res.status(404).json({ success: false, message: "This package is not available." });
+    }
+    if (packageItem.currency !== "BHD") {
+      return res.status(422).json({
+        success: false,
+        code: "PACKAGE_CURRENCY_UNSUPPORTED",
+        message: "This legacy package cannot be ordered until its currency is changed to BHD.",
+      });
     }
     if (!freelancer) {
       return res.status(422).json({ success: false, message: "This freelancer is not available." });

@@ -7,6 +7,9 @@ const FreelancerProfile = require("../models/FreelancerProfile")
 const { recordAuditLog, recordAuditLogs } = require("../services/audit.service")
 
 const PROPOSAL_STATUSES = ["pending", "shortlisted", "accepted", "declined", "withdrawn"]
+const MAX_COVER_LETTER_LENGTH = 5000
+const MAX_MILESTONES = 20
+const MAX_ATTACHMENTS = 5
 
 function handleError(res, err) {
     if (err?.code === 11000) {
@@ -38,7 +41,7 @@ function validateProposalDetails(amount, deliveryDays) {
 }
 
 function validateMilestones(milestones, proposalAmount) {
-    if (milestones === undefined || milestones.length === 0) {
+    if (milestones === undefined) {
         return null
     }
 
@@ -46,13 +49,33 @@ function validateMilestones(milestones, proposalAmount) {
         return "Milestones must be an array."
     }
 
+    if (milestones.length === 0) {
+        return null
+    }
+
+    if (milestones.length > MAX_MILESTONES) {
+        return `A proposal can have at most ${MAX_MILESTONES} milestones.`
+    }
+
     for (const milestone of milestones) {
         if (typeof milestone.title !== "string" || !milestone.title.trim()) {
             return "Every milestone must have a title."
         }
 
+        if (milestone.title.trim().length > 200) {
+            return "Milestone titles must be 200 characters or fewer."
+        }
+
         if (typeof milestone.amount !== "number" || milestone.amount <= 0) {
             return "Every milestone amount must be greater than 0."
+        }
+
+        if (typeof milestone.description !== "string" || !milestone.description.trim()) {
+            return "Every milestone must have a description."
+        }
+
+        if (milestone.description.trim().length > 2000) {
+            return "Milestone descriptions must be 2000 characters or fewer."
         }
 
         if (milestone.dueDate !== undefined) {
@@ -77,6 +100,25 @@ function validateMilestones(milestones, proposalAmount) {
     return null
 }
 
+function validateAttachments(attachments) {
+    if (attachments === undefined) return null
+    if (!Array.isArray(attachments)) return "Attachments must be an array."
+    if (attachments.length > MAX_ATTACHMENTS) return `A proposal can have at most ${MAX_ATTACHMENTS} attachments.`
+
+    for (const attachment of attachments) {
+        if (!attachment || typeof attachment.url !== "string" || !/^https?:\/\//i.test(attachment.url)) {
+            return "Every attachment must include a valid http or https URL."
+        }
+        if (attachment.url.length > 2000) return "Attachment URLs must be 2000 characters or fewer."
+        if (typeof attachment.name !== "string" || !attachment.name.trim()) {
+            return "Every attachment must include a name."
+        }
+        if (attachment.name.trim().length > 255) return "Attachment names must be 255 characters or fewer."
+    }
+
+    return null
+}
+
 async function submitProposal(req, res) {
     const session = await mongoose.startSession()
 
@@ -91,6 +133,10 @@ async function submitProposal(req, res) {
             return res.status(400).json({ success: false, message: "Cover letter cannot be empty." })
         }
 
+        if (coverLetter.trim().length > MAX_COVER_LETTER_LENGTH) {
+            return res.status(400).json({ success: false, message: `Cover letter must be ${MAX_COVER_LETTER_LENGTH} characters or fewer.` })
+        }
+
         const proposalError = validateProposalDetails(amount, deliveryDays)
 
         if (proposalError) {
@@ -103,8 +149,10 @@ async function submitProposal(req, res) {
             return res.status(400).json({ success: false, message: milestoneError })
         }
 
-        if (attachments !== undefined && !Array.isArray(attachments)) {
-            return res.status(400).json({ success: false, message: "Attachments must be an array." })
+        const attachmentError = validateAttachments(attachments)
+
+        if (attachmentError) {
+            return res.status(400).json({ success: false, message: attachmentError })
         }
 
         const user = await User.findById(req.user._id).select("role status")
@@ -128,15 +176,29 @@ async function submitProposal(req, res) {
         }
 
         if (job.status !== "open") {
-            return res.status(422).json({ success: false, message: "Proposals can only be submitted to open jobs." })
+            return res.status(409).json({ success: false, message: "Proposals can only be submitted to open jobs." })
+        }
+
+        if (job.deadline && job.deadline <= new Date()) {
+            return res.status(409).json({ success: false, message: "The proposal deadline has passed." })
         }
 
         if (job.isHidden) {
             return res.status(404).json({ success: false, message: "Job not found." })
         }
 
+        const activeClient = await User.exists({
+            _id: job.client,
+            role: "client",
+            status: "active",
+        })
+
+        if (!activeClient) {
+            return res.status(404).json({ success: false, message: "Job not found." })
+        }
+
         if (String(job.client) === String(req.user._id)) {
-            return res.status(422).json({ success: false, message: "You cannot submit a proposal to your own job." })
+            return res.status(403).json({ success: false, message: "You cannot submit a proposal to your own job." })
         }
 
         const existingProposal = await Proposal.exists({ job: job._id, freelancer: req.user._id })
@@ -157,7 +219,21 @@ async function submitProposal(req, res) {
             attachments: attachments || [],
         }], { session })
 
-        const jobUpdate = await Job.updateOne({ _id: job._id }, { $inc: { proposalsCount: 1 } }, { session })
+        const jobUpdate = await Job.updateOne({
+            _id: job._id,
+            status: "open",
+            isHidden: false,
+            $or: [
+                { deadline: { $exists: false } },
+                { deadline: null },
+                { deadline: { $gt: new Date() } },
+            ],
+        }, { $inc: { proposalsCount: 1 } }, { session })
+
+        if (jobUpdate.modifiedCount === 0) {
+            await session.abortTransaction()
+            return res.status(409).json({ success: false, message: "This job is no longer accepting proposals." })
+        }
 
         const auditEntries = [{
             action: "create",
@@ -247,6 +323,38 @@ async function getMyProposals(req, res) {
     }
 }
 
+async function getMyProposalForJob(req, res) {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.jobId)) {
+            return res.status(400).json({ success: false, message: "Invalid job id." })
+        }
+
+        const user = await User.findById(req.user._id).select("role")
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found." })
+        }
+
+        if (user.role !== "freelancer") {
+            return res.status(403).json({ success: false, message: "Only freelancers can access their proposals." })
+        }
+
+        const proposal = await Proposal.findOne({
+            job: req.params.jobId,
+            freelancer: req.user._id,
+        }).populate("job", "title status budgetType budgetMin budgetMax deadline")
+
+        if (!proposal) {
+            return res.status(404).json({ success: false, message: "Proposal not found." })
+        }
+
+        return res.status(200).json({ success: true, data: { proposal } })
+
+    } catch (err) {
+        return handleError(res, err)
+    }
+}
+
 async function updateProposal(req, res) {
     try {
         const proposal = await Proposal.findOne({ _id: req.params.id, freelancer: req.user._id })
@@ -271,6 +379,10 @@ async function updateProposal(req, res) {
             return res.status(400).json({ success: false, message: "Cover letter cannot be empty." })
         }
 
+        if (proposal.coverLetter.trim().length > MAX_COVER_LETTER_LENGTH) {
+            return res.status(400).json({ success: false, message: `Cover letter must be ${MAX_COVER_LETTER_LENGTH} characters or fewer.` })
+        }
+
         const proposalError = validateProposalDetails(proposal.amount, proposal.deliveryDays)
 
         if (proposalError) {
@@ -283,8 +395,10 @@ async function updateProposal(req, res) {
             return res.status(400).json({ success: false, message: milestoneError })
         }
 
-        if (!Array.isArray(proposal.attachments)) {
-            return res.status(400).json({ success: false, message: "Attachments must be an array." })
+        const attachmentError = validateAttachments(proposal.attachments)
+
+        if (attachmentError) {
+            return res.status(400).json({ success: false, message: attachmentError })
         }
 
         proposal.coverLetter = proposal.coverLetter.trim()
@@ -432,6 +546,15 @@ async function updateProposalStatus(req, res) {
             return res.status(400).json({ success: false, message: "Status must be shortlisted or declined." })
         }
 
+        if (status === "declined" && declineReason !== undefined) {
+            if (typeof declineReason !== "string") {
+                return res.status(400).json({ success: false, message: "Decline reason must be text." })
+            }
+            if (declineReason.trim().length > 500) {
+                return res.status(400).json({ success: false, message: "Decline reason must be 500 characters or fewer." })
+            }
+        }
+
         const proposal = await Proposal.findById(req.params.id)
 
         if (!proposal) {
@@ -517,6 +640,7 @@ async function acceptProposal(req, res) {
 
             contractMilestones = proposal.milestones.map((milestone) => ({
                 title: milestone.title,
+                description: milestone.description,
                 amount: milestone.amount,
                 dueDate: milestone.dueDate,
                 status: "pending",
@@ -528,6 +652,7 @@ async function acceptProposal(req, res) {
 
             contractMilestones = [{
                 title: "Project delivery",
+                description: job.description,
                 amount: proposal.amount,
                 dueDate,
                 status: "pending",
@@ -545,7 +670,7 @@ async function acceptProposal(req, res) {
             },
             title: job.title,
             totalAmount: proposal.amount,
-            currency: "USD",
+            currency: "BHD",
             status: "active",
             milestones: contractMilestones,
             activity: [{
@@ -639,6 +764,7 @@ async function acceptProposal(req, res) {
 module.exports = {
     submitProposal,
     getMyProposals,
+    getMyProposalForJob,
     updateProposal,
     withdrawProposal,
     getJobProposals,

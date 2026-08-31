@@ -35,7 +35,7 @@ router.post("/:id/proposals", verifyToken, validateObjectId, proposalController.
 
 router.get("/:id/proposals", verifyToken, validateObjectId, proposalController.getJobProposals);
 
-
+router.get("/:id/similar", validateObjectId, jobController.getSimilarJobs);
 
 router.get("/:id", validateObjectId, jobController.getJob);
 

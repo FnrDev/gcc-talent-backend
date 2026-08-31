@@ -13,5 +13,9 @@ router.post("/contracts/:id/reviews", verifyToken, validateObjectId, reviewContr
 
 router.get("/users/:id/reviews", validateObjectId, reviewController.getUserReviews);
 
+router.get("/users/:id/rating", validateObjectId, reviewController.getUserRating);
+
+router.get("/services/:id/reviews", validateObjectId, reviewController.getServiceReviews);
+
 
 module.exports = router;

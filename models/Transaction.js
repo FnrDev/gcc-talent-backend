@@ -42,6 +42,11 @@ const transactionSchema = new mongoose.Schema(
       required: true,
       min: 0, // always positive; sign is carried by `direction`
     },
+    currency: {
+      type: String,
+      enum: ["BHD"],
+      default: "BHD",
+    },
     direction: {
       type: String,
       enum: TRANSACTION_DIRECTIONS,
@@ -58,10 +63,28 @@ const transactionSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
+    // Hash of the canonical request body. It allows a repeated
+    // Idempotency-Key to be replayed safely while rejecting key reuse with a
+    // different amount or payment payload. This value is never returned.
+    requestHash: {
+      type: String,
+      select: false,
+    },
+    failureCode: {
+      type: String,
+      trim: true,
+    },
   },
   { timestamps: true } // adds createdAt + updatedAt
 );
 
 transactionSchema.index({ user: 1, createdAt: -1 });
+
+transactionSchema.set("toJSON", {
+  transform: (_document, value) => {
+    delete value.requestHash;
+    return value;
+  },
+});
 
 module.exports = mongoose.model("Transaction", transactionSchema);

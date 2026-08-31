@@ -15,6 +15,8 @@ module.exports = {
   Job: require("./Job"),
   Proposal: require("./Proposal"),
   Contract: require("./Contract"),
+  ContractMessage: require("./ContractMessage"),
+  IdempotencyRecord: require("./IdempotencyRecord"),
   Transaction: require("./Transaction"),
   Review: require("./Review"),
   Package: require("./Package"),

@@ -11,6 +11,8 @@ const validateObjectId = require("../middleware/validateObjectId");
 
 router.get("/mine", verifyToken, proposalController.getMyProposals);
 
+router.get("/mine/:jobId", verifyToken, proposalController.getMyProposalForJob);
+
 router.patch("/:id", verifyToken, validateObjectId, proposalController.updateProposal);
 
 router.post("/:id/withdraw", verifyToken, validateObjectId, proposalController.withdrawProposal);

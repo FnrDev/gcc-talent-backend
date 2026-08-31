@@ -1,6 +1,7 @@
 const router = require("express").Router();
 
 const contractController = require("../controllers/contract.controller");
+const messageController = require("../controllers/message.controller");
 
 const verifyToken = require("../middleware/verifyToken");
 
@@ -15,6 +16,14 @@ router.use(verifyToken);
 
 router.get("/", contractController.getContracts);
 
+router.get("/:id/workspace", validateObjectId, contractController.getContract);
+
+router.get("/:id/activity", validateObjectId, contractController.getContractActivity);
+
+router.get("/:id/messages", validateObjectId, messageController.getContractMessages);
+
+router.post("/:id/messages", validateObjectId, messageController.createContractMessage);
+
 router.get("/:id", validateObjectId, contractController.getContract);
 
 router.post("/:id/milestones", validateObjectId, contractController.addMilestone);
@@ -26,6 +35,8 @@ router.post("/:id/milestones/:mid/fund", validateObjectId, contractController.fu
 router.post("/:id/milestones/:mid/start", validateObjectId, contractController.startMilestone);
 
 router.post("/:id/milestones/:mid/deliver", validateObjectId, contractController.deliverMilestone);
+
+router.post("/:id/milestones/:mid/deliveries", validateObjectId, contractController.deliverMilestone);
 
 router.post("/:id/milestones/:mid/request-revision", validateObjectId, contractController.requestRevision);
 

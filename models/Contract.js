@@ -19,8 +19,8 @@ const DELIVERY_RESPONSES = ["approved", "revision"];
 
 const attachmentSchema = new mongoose.Schema(
   {
-    url: { type: String, required: true },
-    name: { type: String, required: true },
+    url: { type: String, required: true, trim: true, maxlength: 2048 },
+    name: { type: String, required: true, trim: true, maxlength: 180 },
   },
   { _id: false }
 );
@@ -28,8 +28,14 @@ const attachmentSchema = new mongoose.Schema(
 // One submission of work against a milestone (F-CON-04/05).
 const deliverySchema = new mongoose.Schema(
   {
-    message: { type: String, trim: true },
-    attachments: [attachmentSchema],
+    message: { type: String, required: true, trim: true, maxlength: 4000 },
+    attachments: {
+      type: [attachmentSchema],
+      validate: {
+        validator: (attachments) => attachments.length <= 10,
+        message: "A delivery can contain at most 10 attachments.",
+      },
+    },
     submittedAt: { type: Date, default: Date.now },
     response: { type: String, enum: DELIVERY_RESPONSES },
     responseNote: { type: String, trim: true },
@@ -170,7 +176,8 @@ const contractSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      default: "USD",
+      enum: ["USD", "SAR", "AED", "BHD"],
+      default: "BHD",
     },
     status: {
       type: String,
@@ -202,6 +209,12 @@ const contractSchema = new mongoose.Schema(
     ],
     startedAt: { type: Date },
     completedAt: { type: Date },
+    // A single lifecycle timestamp for either terminal state. `completedAt`
+    // remains for backwards compatibility with existing contract consumers.
+    endedAt: { type: Date },
+    cancelledAt: { type: Date },
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    cancelReason: { type: String, trim: true, maxlength: 1000 },
   },
   { timestamps: true } // adds createdAt + updatedAt
 );

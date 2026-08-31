@@ -35,7 +35,9 @@ const packageSchema = new mongoose.Schema(
         currency: {
             type: String,
             enum: ["USD", "SAR", "AED", "BHD"],
-            default: "USD",
+            // Non-BHD values remain readable for legacy records, but all new
+            // marketplace packages are created in the platform currency.
+            default: "BHD",
         },
 
         deliveryDays: {

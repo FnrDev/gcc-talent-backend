@@ -276,15 +276,9 @@ domain is verified.
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
-| `GET` | `/profiles/me` | Return the current user's editable profile. | Authenticated |
-| `PUT` | `/profiles/me` | Create or replace the current freelancer profile. | Freelancer |
-| `PUT` | `/profiles/me/client` | Create or replace the current client profile. | Client |
-| `GET` | `/profiles/me/completeness` | Calculate profile completion and list missing sections. | Authenticated |
-| `POST` | `/profiles/me/portfolio` | Add a portfolio item. | Freelancer |
-| `PATCH` | `/profiles/me/portfolio/{itemId}` | Update a portfolio item. | Freelancer |
-| `DELETE` | `/profiles/me/portfolio/{itemId}` | Delete a portfolio item. | Freelancer |
-| `GET` | `/freelancers/{freelancerId}` | Return a public freelancer profile, rating, reviews, and active gigs. | Public |
-| `GET` | `/clients/{clientId}` | Return a public client profile, hiring statistics, jobs, and reviews. | Public |
+| `GET` | `/profile/me` | Return the current user's editable account and role-specific profile. | Authenticated |
+| `PATCH` | `/profile/me` | Update the current user's role-specific profile fields. | Authenticated |
+| `GET` | `/profile/{userId}` | Return the safe public user and role-specific profile, up to six current listings, ten recent reviews, and rating/activity counters. | Public |
 
 ### Uploads
 
@@ -354,27 +348,26 @@ curl -X POST 'http://localhost:3000/uploads?purpose=service-image' \
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
-| `GET` | `/contracts` | List contracts visible to the current user. | Authenticated |
+| `GET` | `/contracts?role={role}&status={status}&sourceType={sourceType}&page={page}&limit={limit}` | List contracts visible to the current user, optionally filtered by party role, contract status, and source type (`job`, `gig`, or `service`). | Authenticated |
 | `GET` | `/contracts/{contractId}` | Return a contract and its source, parties, milestones, money, and status. | Contract party |
-| `POST` | `/contracts/{contractId}/milestones` | Add a milestone to an eligible contract. | Contract party |
-| `PATCH` | `/contracts/{contractId}/milestones/{milestoneId}` | Update an eligible milestone. | Contract party |
-| `POST` | `/contracts/{contractId}/milestones/{milestoneId}/fund` | Move client funds into milestone escrow. | Client party |
+| `POST` | `/contracts/{contractId}/milestones` | Add a milestone to an eligible contract. | Client party |
+| `PATCH` | `/contracts/{contractId}/milestones/{milestoneId}` | Update an unfunded milestone. | Client party |
+| `POST` | `/contracts/{contractId}/milestones/{milestoneId}/fund` | Move client funds into milestone escrow. Requires `Idempotency-Key`. | Client party |
 | `POST` | `/contracts/{contractId}/milestones/{milestoneId}/deliveries` | Submit a message and attachments as a milestone delivery. | Freelancer party |
-| `POST` | `/contracts/{contractId}/milestones/{milestoneId}/approve` | Approve delivery, release escrow, and evaluate contract completion. | Client party |
+| `POST` | `/contracts/{contractId}/milestones/{milestoneId}/approve` | Approve delivery, release escrow, and evaluate contract completion. Requires `Idempotency-Key`. | Client party |
 | `POST` | `/contracts/{contractId}/milestones/{milestoneId}/request-revision` | Return a delivered milestone to in-progress with revision comments. | Client party |
-| `POST` | `/contracts/{contractId}/cancel` | Cancel an eligible contract and refund or dispute funded milestones. | Contract party |
+| `POST` | `/contracts/{contractId}/cancel` | Cancel an eligible contract and refund funded milestones. Requires `Idempotency-Key`. | Contract party |
 | `GET` | `/contracts/{contractId}/workspace` | Return the combined contract workspace summary. | Contract party |
 | `GET` | `/contracts/{contractId}/activity` | Return the contract timeline and activity log. | Contract party |
 | `GET` | `/contracts/{contractId}/messages` | Return paginated contract messages. | Contract party |
-| `POST` | `/internal/jobs/auto-approve-deliveries` | Auto-approve deliveries after the configured inactivity period. | Internal scheduler |
 
 ### Wallet
 
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
 | `GET` | `/wallet` | Return available, pending, and escrow balance information. | Authenticated |
-| `POST` | `/wallet/deposits` | Run the mock checkout and credit the user's wallet. | Authenticated |
-| `POST` | `/wallet/withdrawals` | Create a simulated payout from the available balance. | Authenticated |
+| `POST` | `/wallet/deposits` | Run the mock checkout and credit the user's wallet. Requires `Idempotency-Key`. | Authenticated |
+| `POST` | `/wallet/withdrawals` | Create a simulated payout from the available balance. Requires `Idempotency-Key`. | Freelancer |
 
 ### Transactions
 
@@ -390,8 +383,7 @@ curl -X POST 'http://localhost:3000/uploads?purpose=service-image' \
 | `POST` | `/contracts/{contractId}/reviews` | Leave one rating and comment for the other contract party. | Contract party |
 | `GET` | `/users/{userId}/rating` | Return a user's average rating and review count. | Public |
 | `GET` | `/users/{userId}/reviews?page={page}&limit={limit}` | Return a user's reviews, newest first. | Public |
-| `GET` | `/gigs/{gigId}/reviews?page={page}&limit={limit}` | Return reviews associated with a gig, newest first. | Public |
-| `POST` | `/reviews/{reviewId}/reply` | Add the review recipient's single reply. | Reviewed user |
+| `GET` | `/services/{serviceId}/reviews?page={page}&limit={limit}` | Return verified reviews associated with a service, newest first. | Public |
 
 ### General
 
@@ -399,7 +391,7 @@ curl -X POST 'http://localhost:3000/uploads?purpose=service-image' \
 | --- | --- | --- | --- |
 | `GET` | `/home` | Return landing-page categories and featured marketplace content. | Public |
 | `GET` | `/dashboard` | Return the current user's role-aware dashboard summary. | Authenticated |
-| `GET` | `/search?type={type}&query={query}&page={page}&limit={limit}` | Search jobs, gigs, or freelancers; `type` accepts `jobs`, `gigs`, or `freelancers`. | Public |
+| `GET` | `/search?type={type}&query={query}&page={page}&limit={limit}` | Search jobs, services, or freelancers; `gigs` remains an alias for `services`. | Public |
 
 ### Skills
 
@@ -448,6 +440,7 @@ curl -X POST http://localhost:3000/services/SERVICE_ID/orders \
 | Method | Route | Description | Access |
 | --- | --- | --- | --- |
 | `GET` | `/admin/stats` | Return users by role, 7/30-day sign-ups, open jobs, active contracts, GMV, platform revenue, and a 30-day sign-up series. | Admin |
+| `POST` | `/admin/seed` | Idempotently prepare the complete local demo marketplace dataset. Refuses production and non-local databases. | Admin |
 | `GET` | `/admin/audit-logs` | Filter and paginate read-only audit history, with minimal actor details and preserved IDs for deleted users. | Admin |
 | `GET` | `/admin/users?search={query}&role={role}&status={status}&page={page}&limit={limit}` | Search, filter, sort, and paginate users. | Admin |
 | `GET` | `/admin/users/{userId}` | Return one user's account summary, contracts, and transactions. | Admin |
@@ -466,10 +459,13 @@ curl -X POST http://localhost:3000/services/SERVICE_ID/orders \
 
 ### Development seed data
 
-Run `npm run seed:featured` to create or update the three demo freelancers, their profiles,
-packages, and services used by the landing page's **Featured Freelancers & Services** section.
-The command is idempotent, never deletes existing records, and refuses production or non-local
-MongoDB targets.
+Run `npm run seed` (or `npm run seed:demo`) to idempotently prepare a realistic local
+marketplace: one admin, six categories, 18 skills, 20 freelancers, 10 clients, profiles, services,
+jobs, proposals, contracts, transactions, and reviews. Set `DEMO_SEED_PASSWORD` before the first
+run only when you need the generated demo accounts to share a known development password. The
+command never deletes existing records and refuses production or non-local MongoDB targets.
+
+`npm run seed:featured` remains available for the smaller three-freelancer landing-page dataset.
 
 Wallet and escrow mutation routes must run atomically and accept an `Idempotency-Key` header so a
 retried request cannot deposit, fund, release, refund, or withdraw money more than once. Contract

@@ -1,7 +1,7 @@
 const Package = require("../models/Package");
 const User = require("../models/User");
 
-const CURRENCIES = ["USD", "SAR", "AED", "BHD"];
+const PLATFORM_CURRENCY = "BHD";
 
 function handleError(res, err) {
     if (err?.name === "ValidationError") {
@@ -45,8 +45,8 @@ function validatePackageFields({ name, title, description, price, currency, deli
         return "Package price must be a non-negative number.";
     }
 
-    if (currency !== undefined && !CURRENCIES.includes(currency)) {
-        return "Invalid package currency.";
+    if (currency !== undefined && currency !== PLATFORM_CURRENCY) {
+        return `Packages must use ${PLATFORM_CURRENCY}.`;
     }
 
     if (deliveryDays !== undefined && (!Number.isInteger(deliveryDays) || deliveryDays < 1)) {
@@ -126,7 +126,7 @@ async function createPackage(req, res) {
             title: title.trim(),
             description: typeof description === "string" ? description.trim() : undefined,
             price,
-            currency: currency || "USD",
+            currency: currency || PLATFORM_CURRENCY,
             deliveryDays,
             revisions: revisions ?? 0,
             features: features ? features.map((feature) => feature.trim()) : [],

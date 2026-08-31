@@ -90,5 +90,8 @@ const jobSchema = new mongoose.Schema(
 // Supports F-JOB-03 keyword search across title/description.
 jobSchema.index({ title: "text", description: "text" });
 jobSchema.index({ createdAt: -1 });
+jobSchema.index({ status: 1, isHidden: 1, category: 1, createdAt: -1 });
+jobSchema.index({ status: 1, isHidden: 1, skills: 1 });
+jobSchema.index({ status: 1, isHidden: 1, budgetType: 1, experienceLevel: 1 });
 
 module.exports = mongoose.model("Job", jobSchema);

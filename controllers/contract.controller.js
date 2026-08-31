@@ -1,10 +1,15 @@
+const crypto = require("node:crypto")
 const mongoose = require("mongoose")
 const Contract = require("../models/Contract")
 const User = require("../models/User")
 const Transaction = require("../models/Transaction")
 const Job = require("../models/Job")
+const ContractMessage = require("../models/ContractMessage")
+const Review = require("../models/Review")
+const IdempotencyRecord = require("../models/IdempotencyRecord")
 const { recordAuditLog, recordAuditLogs } = require("../services/audit.service")
 
+const CONTRACT_SOURCE_TYPES = ["job", "gig", "service"]
 const CONTRACT_STATUSES = ["active", "completed", "cancelled"]
 
 const configuredFee = Number(process.env.PLATFORM_FEE_PERCENT)
@@ -28,7 +33,68 @@ function handleError(res, err) {
 }
 
 function roundMoney(amount) {
-    return Math.round((amount + Number.EPSILON) * 100) / 100
+    return Math.round((amount + Number.EPSILON) * 1000) / 1000
+}
+
+async function supportsAtomicMutations() {
+    if (!mongoose.connection.db) return false
+
+    try {
+        const hello = await mongoose.connection.db.admin().command({ hello: 1 })
+        return Boolean(hello.setName || hello.msg === "isdbgrid")
+    } catch {
+        return false
+    }
+}
+
+function atomicityUnavailable(res) {
+    return res.status(503).json({
+        success: false,
+        code: "CONTRACT_ATOMICITY_UNAVAILABLE",
+        message: "This contract payment action requires MongoDB replica-set transaction support. No contract, wallet, or ledger data was changed.",
+    })
+}
+
+function buildIdempotencyContext(req, operation, payload) {
+    const rawKey = req.get("Idempotency-Key")
+
+    if (typeof rawKey !== "string" || !rawKey.trim() || rawKey.trim().length > 200) {
+        return null
+    }
+
+    const key = rawKey.trim()
+    return {
+        user: req.user._id,
+        operation,
+        keyHash: crypto.createHash("sha256").update(`${operation}:${req.user._id}:${key}`).digest("hex"),
+        requestHash: crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+    }
+}
+
+async function replayMutation(res, context) {
+    const existing = await IdempotencyRecord.findOne({
+        user: context.user,
+        operation: context.operation,
+        keyHash: context.keyHash,
+    }).select("+keyHash +requestHash").lean()
+
+    if (!existing) return false
+
+    if (existing.requestHash !== context.requestHash) {
+        res.status(409).json({ success: false, message: "This Idempotency-Key was already used with a different request." })
+        return true
+    }
+
+    res.status(existing.responseStatus).json({ ...existing.responseBody, replayed: true })
+    return true
+}
+
+async function persistIdempotentResponse(context, responseStatus, responseBody, session) {
+    await IdempotencyRecord.create([{
+        ...context,
+        responseStatus,
+        responseBody,
+    }], { session })
 }
 
 function transactionAuditEntry(transaction, operation) {
@@ -57,13 +123,32 @@ function getMilestone(contract, milestoneId) {
     return contract.milestones.id(milestoneId)
 }
 
+function normalizeAttachments(rawAttachments) {
+    if (rawAttachments === undefined) return []
+    if (!Array.isArray(rawAttachments) || rawAttachments.length > 10) return null
+
+    const attachments = []
+
+    for (const attachment of rawAttachments) {
+        if (!attachment || typeof attachment.url !== "string" || typeof attachment.name !== "string") return null
+
+        const url = attachment.url.trim()
+        const name = attachment.name.trim()
+
+        if (!/^https?:\/\//i.test(url) || url.length > 2048 || !name || name.length > 180) return null
+        attachments.push({ url, name })
+    }
+
+    return attachments
+}
+
 async function getCurrentUser(userId) {
     return User.findById(userId).select("role status wallet")
 }
 
 async function getContracts(req, res) {
     try {
-        const { role, status, page = 1, limit = 20 } = req.query
+        const { role, status, sourceType, page = 1, limit = 20 } = req.query
 
         if (role !== undefined && !["client", "freelancer"].includes(role)) {
             return res.status(400).json({ success: false, message: "Role must be client or freelancer." })
@@ -71,6 +156,10 @@ async function getContracts(req, res) {
 
         if (status !== undefined && !CONTRACT_STATUSES.includes(status)) {
             return res.status(400).json({ success: false, message: "Invalid contract status." })
+        }
+
+        if (sourceType !== undefined && !CONTRACT_SOURCE_TYPES.includes(sourceType)) {
+            return res.status(400).json({ success: false, message: "Invalid contract source type." })
         }
 
         const parsedPage = Number.parseInt(page, 10)
@@ -93,6 +182,10 @@ async function getContracts(req, res) {
 
         if (status !== undefined) {
             filter.status = status
+        }
+
+        if (sourceType !== undefined) {
+            filter["source.type"] = sourceType
         }
 
         const skip = (currentPage - 1) * currentLimit
@@ -135,10 +228,18 @@ async function getContract(req, res) {
             return res.status(404).json({ success: false, message: "Contract not found." })
         }
 
-        const transactions = await Transaction.find({ contract: contract._id })
-            .select("user milestoneId type amount direction status reference createdAt")
-            .sort({ createdAt: -1 })
-            .lean()
+        const [transactions, latestMessages, myReview] = await Promise.all([
+            Transaction.find({ contract: contract._id })
+                .select("user milestoneId type amount currency direction status reference failureCode createdAt")
+                .sort({ createdAt: -1 })
+                .lean(),
+            ContractMessage.find({ contract: contract._id })
+                .populate("sender", "name avatarUrl role")
+                .sort({ createdAt: -1 })
+                .limit(50)
+                .lean(),
+            Review.findOne({ contract: contract._id, reviewer: req.user._id }).lean(),
+        ])
 
         const escrowHeld = roundMoney(contract.milestones.reduce((total, milestone) => total + (milestone.escrowAmount || 0), 0))
         const approvedAmount = roundMoney(contract.milestones.filter((milestone) => milestone.status === "approved").reduce((total, milestone) => total + milestone.amount, 0))
@@ -152,8 +253,44 @@ async function getContract(req, res) {
             currency: contract.currency,
         }
 
-        return res.status(200).json({ success: true, data: { contract, moneySummary, transactions } })
+        return res.status(200).json({ success: true, data: { contract, moneySummary, transactions, messages: latestMessages.reverse(), myReview } })
 
+    } catch (err) {
+        return handleError(res, err)
+    }
+}
+
+async function getContractActivity(req, res) {
+    try {
+        const filter = req.user.role === "admin"
+            ? { _id: req.params.id }
+            : { _id: req.params.id, $or: [{ client: req.user._id }, { freelancer: req.user._id }] }
+
+        const contract = await Contract.findOne(filter)
+            .select("title status activity createdAt startedAt completedAt endedAt cancelledAt")
+            .populate("activity.by", "name avatarUrl role")
+            .lean()
+
+        if (!contract) {
+            return res.status(404).json({ success: false, message: "Contract not found." })
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                contract: {
+                    _id: contract._id,
+                    title: contract.title,
+                    status: contract.status,
+                    createdAt: contract.createdAt,
+                    startedAt: contract.startedAt,
+                    completedAt: contract.completedAt,
+                    endedAt: contract.endedAt,
+                    cancelledAt: contract.cancelledAt,
+                },
+                activity: [...(contract.activity || [])].sort((left, right) => new Date(right.at) - new Date(left.at)),
+            },
+        })
     } catch (err) {
         return handleError(res, err)
     }
@@ -191,6 +328,10 @@ async function addMilestone(req, res) {
             return res.status(400).json({ success: false, message: "Milestone title is required." })
         }
 
+        if (typeof description !== "string" || !description.trim()) {
+            return res.status(400).json({ success: false, message: "Milestone description is required." })
+        }
+
         if (typeof amount !== "number" || amount <= 0) {
             return res.status(400).json({ success: false, message: "Milestone amount must be greater than 0." })
         }
@@ -211,7 +352,7 @@ async function addMilestone(req, res) {
 
         contract.milestones.push({
             title: title.trim(),
-            description: typeof description === "string" ? description.trim() : undefined,
+            description: description.trim(),
             amount,
             dueDate: parsedDueDate,
             status: "pending",
@@ -292,11 +433,11 @@ async function updateMilestone(req, res) {
         }
 
         if (Object.hasOwn(req.body, "description")) {
-            if (req.body.description !== undefined && typeof req.body.description !== "string") {
-                return res.status(400).json({ success: false, message: "Milestone description must be a string." })
+            if (typeof req.body.description !== "string" || !req.body.description.trim()) {
+                return res.status(400).json({ success: false, message: "Milestone description cannot be empty." })
             }
 
-            milestone.description = typeof req.body.description === "string" ? req.body.description.trim() : undefined
+            milestone.description = req.body.description.trim()
         }
 
         if (Object.hasOwn(req.body, "amount")) {
@@ -354,6 +495,23 @@ async function updateMilestone(req, res) {
 }
 
 async function fundMilestone(req, res) {
+    const idempotency = buildIdempotencyContext(req, "contract.fund", {
+        contractId: req.params.id,
+        milestoneId: req.params.mid,
+    })
+
+    if (!idempotency) {
+        return res.status(400).json({ success: false, message: "Idempotency-Key header is required." })
+    }
+
+    try {
+        if (await replayMutation(res, idempotency)) return undefined
+    } catch (err) {
+        return handleError(res, err)
+    }
+
+    if (!await supportsAtomicMutations()) return atomicityUnavailable(res)
+
     const session = await mongoose.startSession()
 
     try {
@@ -453,14 +611,30 @@ async function fundMilestone(req, res) {
 
         await recordAuditLogs(req, auditEntries, { session })
 
+        const responseBody = {
+            success: true,
+            message: "Milestone funded successfully.",
+            data: {
+                milestone: milestone.toObject(),
+                wallet: {
+                    available: user.wallet.available,
+                    pending: user.wallet.pending,
+                },
+            },
+        }
+
+        await persistIdempotentResponse(idempotency, 200, responseBody, session)
+
         await session.commitTransaction()
 
-        return res.status(200).json({ success: true, message: "Milestone funded successfully.", data: { milestone, wallet: user.wallet } })
+        return res.status(200).json(responseBody)
 
     } catch (err) {
         if (session.inTransaction()) {
             await session.abortTransaction()
         }
+
+        if (err?.code === 11000 && await replayMutation(res, idempotency)) return undefined
 
         return handleError(res, err)
 
@@ -576,14 +750,20 @@ async function deliverMilestone(req, res) {
             return res.status(400).json({ success: false, message: "Delivery message is required." })
         }
 
-        if (attachments !== undefined && !Array.isArray(attachments)) {
-            return res.status(400).json({ success: false, message: "Attachments must be an array." })
+        if (message.trim().length > 4000) {
+            return res.status(400).json({ success: false, message: "Delivery message cannot exceed 4000 characters." })
+        }
+
+        const normalizedAttachments = normalizeAttachments(attachments)
+
+        if (normalizedAttachments === null) {
+            return res.status(400).json({ success: false, message: "Attachments must contain valid HTTP(S) URL and name values (maximum 10)." })
         }
 
         const previousStatus = milestone.status
         milestone.deliveries.push({
             message: message.trim(),
-            attachments: attachments || [],
+            attachments: normalizedAttachments,
             submittedAt: new Date(),
         })
 
@@ -693,6 +873,23 @@ async function requestRevision(req, res) {
 }
 
 async function approveMilestone(req, res) {
+    const idempotency = buildIdempotencyContext(req, "contract.approve", {
+        contractId: req.params.id,
+        milestoneId: req.params.mid,
+    })
+
+    if (!idempotency) {
+        return res.status(400).json({ success: false, message: "Idempotency-Key header is required." })
+    }
+
+    try {
+        if (await replayMutation(res, idempotency)) return undefined
+    } catch (err) {
+        return handleError(res, err)
+    }
+
+    if (!await supportsAtomicMutations()) return atomicityUnavailable(res)
+
     const session = await mongoose.startSession()
 
     try {
@@ -781,6 +978,7 @@ async function approveMilestone(req, res) {
         if (allMilestonesApproved) {
             contract.status = "completed"
             contract.completedAt = new Date()
+            contract.endedAt = contract.completedAt
 
             contract.activity.push({
                 type: "contract_completed",
@@ -827,7 +1025,7 @@ async function approveMilestone(req, res) {
                 status: contract.status,
                 releasedAmount: escrowAmount,
                 platformFee,
-                changedFields: allMilestonesApproved ? ["milestones", "activity", "status", "completedAt"] : ["milestones", "activity"],
+                changedFields: allMilestonesApproved ? ["milestones", "activity", "status", "completedAt", "endedAt"] : ["milestones", "activity"],
             },
         })
 
@@ -860,14 +1058,34 @@ async function approveMilestone(req, res) {
 
         await recordAuditLogs(req, auditEntries, { session })
 
+        const responseBody = {
+            success: true,
+            message: allMilestonesApproved ? "Milestone approved and contract completed successfully." : "Milestone approved successfully.",
+            data: {
+                milestone: milestone.toObject(),
+                contractStatus: contract.status,
+                releasedAmount: escrowAmount,
+                platformFee,
+                freelancerAmount,
+                freelancerWallet: {
+                    available: freelancer.wallet.available,
+                    pending: freelancer.wallet.pending,
+                },
+            },
+        }
+
+        await persistIdempotentResponse(idempotency, 200, responseBody, session)
+
         await session.commitTransaction()
 
-        return res.status(200).json({ success: true, message: allMilestonesApproved ? "Milestone approved and contract completed successfully." : "Milestone approved successfully.", data: { milestone, contractStatus: contract.status, releasedAmount: escrowAmount, platformFee, freelancerAmount, freelancerWallet: freelancer.wallet } })
+        return res.status(200).json(responseBody)
 
     } catch (err) {
         if (session.inTransaction()) {
             await session.abortTransaction()
         }
+
+        if (err?.code === 11000 && await replayMutation(res, idempotency)) return undefined
 
         return handleError(res, err)
 
@@ -877,6 +1095,26 @@ async function approveMilestone(req, res) {
 }
 
 async function cancelContract(req, res) {
+    const reason = typeof req.body.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 1000)
+        : "Cancelled by a contract participant."
+    const idempotency = buildIdempotencyContext(req, "contract.cancel", {
+        contractId: req.params.id,
+        reason,
+    })
+
+    if (!idempotency) {
+        return res.status(400).json({ success: false, message: "Idempotency-Key header is required." })
+    }
+
+    try {
+        if (await replayMutation(res, idempotency)) return undefined
+    } catch (err) {
+        return handleError(res, err)
+    }
+
+    if (!await supportsAtomicMutations()) return atomicityUnavailable(res)
+
     const session = await mongoose.startSession()
 
     try {
@@ -969,11 +1207,15 @@ async function cancelContract(req, res) {
         }
 
         contract.status = "cancelled"
+        contract.cancelledAt = new Date()
+        contract.endedAt = contract.cancelledAt
+        contract.cancelledBy = req.user._id
+        contract.cancelReason = reason
 
         contract.activity.push({
             type: "contract_cancelled",
             by: req.user._id,
-            message: refundTotal > 0 ? `Contract cancelled and ${refundTotal} ${contract.currency} refunded to the client.` : "Contract cancelled.",
+            message: refundTotal > 0 ? `Contract cancelled and ${refundTotal} ${contract.currency} refunded to the client. Reason: ${reason}` : `Contract cancelled. Reason: ${reason}`,
             at: new Date(),
         })
 
@@ -983,19 +1225,29 @@ async function cancelContract(req, res) {
             action: "update",
             resource: "Contract",
             resourceId: contract._id,
-            details: { operation: "cancelContract", previousStatus: "active", status: contract.status, refundedAmount: refundTotal, changedFields: ["milestones", "status", "activity"] },
+            details: { operation: "cancelContract", previousStatus: "active", status: contract.status, refundedAmount: refundTotal, changedFields: ["milestones", "status", "activity", "endedAt", "cancelledAt", "cancelledBy", "cancelReason"] },
         })
 
         await recordAuditLogs(req, auditEntries, { session })
 
+        const responseBody = {
+            success: true,
+            message: "Contract cancelled successfully.",
+            data: { contract: contract.toObject(), refundedAmount: refundTotal },
+        }
+
+        await persistIdempotentResponse(idempotency, 200, responseBody, session)
+
         await session.commitTransaction()
 
-        return res.status(200).json({ success: true, message: "Contract cancelled successfully.", data: { contract, refundedAmount: refundTotal } })
+        return res.status(200).json(responseBody)
 
     } catch (err) {
         if (session.inTransaction()) {
             await session.abortTransaction()
         }
+
+        if (err?.code === 11000 && await replayMutation(res, idempotency)) return undefined
 
         return handleError(res, err)
 
@@ -1007,6 +1259,7 @@ async function cancelContract(req, res) {
 module.exports = {
     getContracts,
     getContract,
+    getContractActivity,
     addMilestone,
     updateMilestone,
     fundMilestone,

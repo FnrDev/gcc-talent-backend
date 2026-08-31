@@ -12,6 +12,7 @@ const TRANSACTION_TYPES = [
 ];
 const TRANSACTION_DIRECTIONS = ["credit", "debit"];
 const TRANSACTION_STATUSES = ["completed", "failed"];
+const PLATFORM_CURRENCY = "BHD";
 
 function validateObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
@@ -128,6 +129,7 @@ async function getTransactionSummary(req, res) {
       totalDebited: 0,
       count: 0,
       byType: {},
+      currency: PLATFORM_CURRENCY,
     };
 
     for (const row of rows) {
@@ -143,9 +145,9 @@ async function getTransactionSummary(req, res) {
       summary.byType[type] = { amount: row.amount, count: row.count, direction };
     }
 
-    summary.totalCredited = Math.round(summary.totalCredited * 100) / 100;
-    summary.totalDebited = Math.round(summary.totalDebited * 100) / 100;
-    summary.net = Math.round((summary.totalCredited - summary.totalDebited) * 100) / 100;
+    summary.totalCredited = Math.round(summary.totalCredited * 1000) / 1000;
+    summary.totalDebited = Math.round(summary.totalDebited * 1000) / 1000;
+    summary.net = Math.round((summary.totalCredited - summary.totalDebited) * 1000) / 1000;
 
     return res.status(200).json({ success: true, data: { summary } });
 
@@ -153,6 +155,60 @@ async function getTransactionSummary(req, res) {
     console.error(err);
 
     return res.status(500).json({success: false, message: "Internal Server Error",});
+  }
+}
+
+async function getTransactionReceipt(req, res) {
+  try {
+    const { id } = req.params;
+
+    const transaction = await Transaction.findOne({ _id: id, user: req.user._id })
+      .populate("user", "name email role")
+      .populate({
+        path: "contract",
+        select: "title totalAmount currency status client freelancer endedAt completedAt",
+        populate: [
+          { path: "client", select: "name" },
+          { path: "freelancer", select: "name" },
+        ],
+      })
+      .lean();
+
+    if (!transaction) {
+      return res.status(404).json({ success: false, message: "Transaction not found." });
+    }
+
+    const receiptNumber = `GCT-${String(transaction._id).toUpperCase()}`;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        receipt: {
+          receiptNumber,
+          issuedAt: transaction.createdAt,
+          platform: "GCC Talent",
+          currency: transaction.currency || PLATFORM_CURRENCY,
+          transaction: {
+            _id: transaction._id,
+            type: transaction.type,
+            amount: transaction.amount,
+            direction: transaction.direction,
+            status: transaction.status,
+            reference: transaction.reference,
+            createdAt: transaction.createdAt,
+          },
+          account: transaction.user,
+          contract: transaction.contract || null,
+        },
+      },
+    });
+  } catch (err) {
+    if (err?.name === "CastError") {
+      return res.status(404).json({ success: false, message: "Transaction not found." });
+    }
+
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 }
 
@@ -181,4 +237,5 @@ module.exports = {
   getTransactions,
   getTransactionSummary,
   getTransaction,
+  getTransactionReceipt,
 };

@@ -7,6 +7,22 @@ const { recordAuditLog } = require("../services/audit.service")
 
 const JOB_BUDGET_TYPES = ["fixed", "hourly"]
 const JOB_EXPERIENCE_LEVELS = ["entry", "intermediate", "expert"]
+const JOB_SORTS = {
+    newest: { createdAt: -1, _id: -1 },
+    budget: { budgetMax: -1, budgetMin: -1, createdAt: -1, _id: -1 },
+    budget_high: { budgetMax: -1, budgetMin: -1, createdAt: -1, _id: -1 },
+    budget_desc: { budgetMax: -1, budgetMin: -1, createdAt: -1, _id: -1 },
+    budget_low: { budgetMin: 1, budgetMax: 1, createdAt: -1, _id: -1 },
+    budget_asc: { budgetMin: 1, budgetMax: 1, createdAt: -1, _id: -1 },
+}
+const JOB_DATE_FILTERS = {
+    "24h": 1,
+    today: 1,
+    "7d": 7,
+    week: 7,
+    "30d": 30,
+    month: 30,
+}
 
 function handleError(res, err) {
     if (err?.code === 11000) {
@@ -202,21 +218,48 @@ async function createJob(req, res) {
 async function getJobs(req, res) {
     try {
         const {
-            category,
+            category: legacyCategory,
+            categoryId,
             skill,
-            search,
+            skillIds,
+            search: legacySearch,
+            query,
+            budgetMin,
+            budgetMax,
             budgetType,
             experienceLevel,
+            datePosted,
+            sort = "newest",
             page = 1,
             limit = 20,
         } = req.query
 
+        const category = categoryId ?? legacyCategory
+        const search = query ?? legacySearch
         const parsedPage = Number.parseInt(page, 10)
         const parsedLimit = Number.parseInt(limit, 10)
-        const currentPage = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1
-        const currentLimit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20
 
-        const filter = { status: "open", isHidden: false }
+        if (String(parsedPage) !== String(page) || parsedPage < 1) {
+            return res.status(400).json({ success: false, message: "page must be a positive integer." })
+        }
+
+        if (String(parsedLimit) !== String(limit) || parsedLimit < 1 || parsedLimit > 100) {
+            return res.status(400).json({ success: false, message: "limit must be an integer between 1 and 100." })
+        }
+
+        if (typeof sort !== "string" || !JOB_SORTS[sort]) {
+            return res.status(400).json({ success: false, message: "Invalid job sort option." })
+        }
+
+        const currentPage = parsedPage
+        const currentLimit = parsedLimit
+
+        const activeClientIds = await User.distinct("_id", { role: "client", status: "active" })
+        const filter = {
+            status: "open",
+            isHidden: false,
+            client: { $in: activeClientIds },
+        }
 
         if (category !== undefined) {
             if (!mongoose.Types.ObjectId.isValid(category)) {
@@ -225,11 +268,19 @@ async function getJobs(req, res) {
             filter.category = category
         }
 
-        if (skill !== undefined) {
-            if (!mongoose.Types.ObjectId.isValid(skill)) {
-                return res.status(400).json({ success: false, message: "Invalid skill id." })
+        const requestedSkills = skillIds ?? skill
+
+        if (requestedSkills !== undefined) {
+            const values = (Array.isArray(requestedSkills) ? requestedSkills : [requestedSkills])
+                .flatMap((value) => typeof value === "string" ? value.split(",") : [])
+                .map((value) => value.trim())
+                .filter(Boolean)
+
+            if (values.length === 0 || values.some((value) => !mongoose.Types.ObjectId.isValid(value))) {
+                return res.status(400).json({ success: false, message: "One or more skill ids are invalid." })
             }
-            filter.skills = skill
+
+            filter.skills = { $in: [...new Set(values)] }
         }
 
         if (budgetType !== undefined) {
@@ -246,6 +297,60 @@ async function getJobs(req, res) {
             filter.experienceLevel = experienceLevel
         }
 
+        let parsedBudgetMin
+        let parsedBudgetMax
+
+        if (budgetMin !== undefined) {
+            parsedBudgetMin = Number(budgetMin)
+            if (typeof budgetMin !== "string" || !budgetMin.trim() || !Number.isFinite(parsedBudgetMin) || parsedBudgetMin < 0) {
+                return res.status(400).json({ success: false, message: "budgetMin must be a non-negative number." })
+            }
+        }
+
+        if (budgetMax !== undefined) {
+            parsedBudgetMax = Number(budgetMax)
+            if (typeof budgetMax !== "string" || !budgetMax.trim() || !Number.isFinite(parsedBudgetMax) || parsedBudgetMax < 0) {
+                return res.status(400).json({ success: false, message: "budgetMax must be a non-negative number." })
+            }
+        }
+
+        if (parsedBudgetMin !== undefined && parsedBudgetMax !== undefined && parsedBudgetMin > parsedBudgetMax) {
+            return res.status(400).json({ success: false, message: "budgetMin cannot be greater than budgetMax." })
+        }
+
+        const budgetConditions = []
+        if (parsedBudgetMin !== undefined) {
+            budgetConditions.push({
+                $or: [
+                    { budgetMax: { $gte: parsedBudgetMin } },
+                    { budgetMax: { $exists: false }, budgetMin: { $gte: parsedBudgetMin } },
+                ],
+            })
+        }
+        if (parsedBudgetMax !== undefined) {
+            budgetConditions.push({
+                $or: [
+                    { budgetMin: { $lte: parsedBudgetMax } },
+                    { budgetMin: { $exists: false }, budgetMax: { $lte: parsedBudgetMax } },
+                ],
+            })
+        }
+        if (budgetConditions.length > 0) filter.$and = budgetConditions
+
+        if (datePosted !== undefined) {
+            if (typeof datePosted !== "string" || !JOB_DATE_FILTERS[datePosted]) {
+                return res.status(400).json({ success: false, message: "Invalid date posted option." })
+            }
+
+            const earliestDate = new Date()
+            earliestDate.setDate(earliestDate.getDate() - JOB_DATE_FILTERS[datePosted])
+            filter.createdAt = { $gte: earliestDate }
+        }
+
+        if (search !== undefined && typeof search !== "string") {
+            return res.status(400).json({ success: false, message: "query must be a string." })
+        }
+
         if (typeof search === "string" && search.trim()) {
             filter.$text = { $search: search.trim() }
         }
@@ -253,10 +358,10 @@ async function getJobs(req, res) {
 
         const [jobs, total] = await Promise.all([
             Job.find(filter)
-                .populate("client", "name avatarUrl country city ratingAvg ratingCount")
+                .populate("client", "name avatarUrl country city ratingAvg ratingCount isEmailVerified")
                 .populate("category", "name slug")
                 .populate("skills", "name category")
-                .sort({ createdAt: -1 })
+                .sort(JOB_SORTS[sort])
                 .skip(skip)
                 .limit(currentLimit)
                 .lean(),
@@ -286,21 +391,73 @@ async function getJob(req, res) {
         const { id } = req.params
         const job = await Job.findOne({ _id: id, isHidden: false })
             .populate(
-                "client",
-                "name avatarUrl country city ratingAvg ratingCount"
+                {
+                    path: "client",
+                    match: { role: "client", status: "active" },
+                    select: "name avatarUrl country city ratingAvg ratingCount isEmailVerified",
+                }
             )
             .populate("category", "name slug")
             .populate("skills", "name category")
+            .lean()
 
-        if (!job) {
+        if (!job || !job.client) {
             return res.status(404).json({ success: false, message: "Job not found." })
         }
 
         if (job.status !== "open") {
             return res.status(404).json({ success: false, message: "Job not found." })
         }
+
+        if (job.client?._id) {
+            job.client.jobsPosted = await Job.countDocuments({
+                client: job.client._id,
+                status: { $in: ["open", "in_progress", "completed", "closed"] },
+            })
+        }
+
         return res.status(200).json({ success: true, data: { job } })
 
+    } catch (err) {
+        return handleError(res, err)
+    }
+}
+
+async function getSimilarJobs(req, res) {
+    try {
+        const parsedLimit = Number.parseInt(req.query.limit ?? 4, 10)
+
+        if (String(parsedLimit) !== String(req.query.limit ?? 4) || parsedLimit < 1 || parsedLimit > 12) {
+            return res.status(400).json({ success: false, message: "limit must be an integer between 1 and 12." })
+        }
+
+        const activeClientIds = await User.distinct("_id", { role: "client", status: "active" })
+        const sourceJob = await Job.findOne({
+            _id: req.params.id,
+            status: "open",
+            isHidden: false,
+            client: { $in: activeClientIds },
+        }).select("category skills")
+
+        if (!sourceJob) {
+            return res.status(404).json({ success: false, message: "Job not found." })
+        }
+
+        const similarJobs = await Job.find({
+            _id: { $ne: sourceJob._id },
+            status: "open",
+            isHidden: false,
+            category: sourceJob.category,
+            client: { $in: activeClientIds },
+        })
+            .populate("client", "name avatarUrl country city ratingAvg ratingCount isEmailVerified")
+            .populate("category", "name slug")
+            .populate("skills", "name category")
+            .sort({ isFeatured: -1, createdAt: -1, _id: -1 })
+            .limit(parsedLimit)
+            .lean()
+
+        return res.status(200).json({ success: true, data: { jobs: similarJobs } })
     } catch (err) {
         return handleError(res, err)
     }
@@ -428,7 +585,13 @@ async function updateMyJob(req, res) {
         ]
 
         for (const field of allowedFields) {
-            if (Object.hasOwn(req.body, field)) { job[field] = req.body[field] }
+            if (Object.hasOwn(req.body, field)) {
+                const canBeCleared = ["budgetMin", "budgetMax", "experienceLevel", "deadline"].includes(field)
+                const value = canBeCleared && (req.body[field] === null || req.body[field] === "")
+                    ? undefined
+                    : req.body[field]
+                job[field] = value
+            }
         }
 
         if (
@@ -463,6 +626,8 @@ async function updateMyJob(req, res) {
 
         if (Object.hasOwn(req.body, "experienceLevel")) {
             if (
+                req.body.experienceLevel !== null &&
+                req.body.experienceLevel !== "" &&
                 !JOB_EXPERIENCE_LEVELS.includes(req.body.experienceLevel)
             ) {
                 return res.status(400).json({ success: false, message: "Invalid experience level." })
@@ -479,7 +644,11 @@ async function updateMyJob(req, res) {
             return res.status(400).json({ success: false, message: budgetError })
         }
 
-        if (Object.hasOwn(req.body, "deadline")) {
+        if (
+            Object.hasOwn(req.body, "deadline") &&
+            req.body.deadline !== null &&
+            req.body.deadline !== ""
+        ) {
             const deadlineDate = new Date(req.body.deadline)
 
             if (Number.isNaN(deadlineDate.getTime())) {
@@ -679,6 +848,7 @@ module.exports = {
     createJob,
     getJobs,
     getJob,
+    getSimilarJobs,
     getMyJobs,
     getMyJob,
     updateMyJob,
