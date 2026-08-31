@@ -144,6 +144,30 @@ function getPasswordResetConfiguration() {
   };
 }
 
+function getServiceOrderEmailConfiguration() {
+  const apiKey = (process.env.RESEND_API_KEY || "").trim();
+  const from = (process.env.RESEND_FROM_EMAIL || "").trim();
+  validateSender(apiKey, from, "service order notifications");
+
+  let baseUrl = (process.env.CLIENT_URL || "").trim();
+  if (!baseUrl) {
+    if (process.env.NODE_ENV === "production") {
+      throw configurationError("CLIENT_URL is required for service order notifications in production.");
+    }
+    baseUrl = "http://localhost:5173";
+  }
+
+  const contractBaseUrl = parseEmailUrl(baseUrl, "CLIENT_URL");
+  const basePath = contractBaseUrl.pathname.replace(/\/+$/, "");
+  contractBaseUrl.pathname = `${basePath}/contracts/`;
+
+  return {
+    apiKey,
+    from,
+    contractBaseUrl: contractBaseUrl.toString(),
+  };
+}
+
 function escapeHtml(value) {
   const replacements = {
     "&": "&amp;",
@@ -157,6 +181,16 @@ function escapeHtml(value) {
 
 function getDisplayName(user) {
   return typeof user.name === "string" && user.name.trim() ? user.name.trim() : "there";
+}
+
+function normalizeEmailText(value, fallback = "", maximumLength = 240) {
+  if (typeof value !== "string") return fallback;
+
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized ? normalized.slice(0, maximumLength) : fallback;
 }
 
 function getTokenIdempotencyKey(user, token, namespace) {
@@ -356,10 +390,107 @@ async function sendPasswordChangedEmail({ user, configuration, idempotencyKey } 
   });
 }
 
+async function sendServiceOrderCreatedEmail({ user, client, contract, configuration } = {}) {
+  const emailConfiguration = configuration || getServiceOrderEmailConfiguration();
+  validateSender(emailConfiguration.apiKey, emailConfiguration.from, "service order notifications");
+  const contractBaseUrl = parseEmailUrl(emailConfiguration.contractBaseUrl, "CLIENT_URL");
+
+  return sendEmail({
+    user,
+    configuration: emailConfiguration,
+    purpose: "service order notification",
+    createMessage() {
+      const contractId = contract?._id ? String(contract._id).trim() : "";
+      const recipientId = user?._id ? String(user._id).trim() : "";
+      const snapshot = contract?.source?.packageSnapshot;
+      if (!/^[a-f\d]{24}$/i.test(contractId) || !recipientId || !snapshot) {
+        throw deliveryError(false, "service order notification");
+      }
+
+      const serviceName = normalizeEmailText(snapshot.serviceName);
+      const packageName = normalizeEmailText(snapshot.packageName);
+      const packageTitle = normalizeEmailText(snapshot.title);
+      const currency = normalizeEmailText(snapshot.currency, "", 3);
+      const amount = Number(snapshot.price);
+      const deliveryDays = Number(snapshot.deliveryDays);
+      if (
+        !serviceName ||
+        !packageName ||
+        !packageTitle ||
+        !/^[A-Z]{3}$/.test(currency) ||
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        !Number.isInteger(deliveryDays) ||
+        deliveryDays < 1
+      ) {
+        throw deliveryError(false, "service order notification");
+      }
+
+      const contractUrl = new URL(encodeURIComponent(contractId), contractBaseUrl).toString();
+      const recipientName = normalizeEmailText(getDisplayName(user), "there");
+      const clientName = normalizeEmailText(client?.name, "A client");
+      const amountLabel = `${amount.toFixed(currency === "BHD" ? 3 : 2)} ${currency}`;
+      const dueDateValue = contract?.milestones?.[0]?.dueDate;
+      const dueDate = dueDateValue ? new Date(dueDateValue) : null;
+      const dueDateLabel = dueDate && Number.isFinite(dueDate.getTime())
+        ? dueDate.toISOString().slice(0, 10)
+        : null;
+      const requestHash = createHash("sha256")
+        .update(recipientId)
+        .update(":")
+        .update(contractId)
+        .digest("hex");
+
+      const escapedRecipientName = escapeHtml(recipientName);
+      const escapedClientName = escapeHtml(clientName);
+      const escapedServiceName = escapeHtml(serviceName);
+      const escapedPackageName = escapeHtml(packageName);
+      const escapedPackageTitle = escapeHtml(packageTitle);
+      const escapedAmountLabel = escapeHtml(amountLabel);
+      const escapedContractUrl = escapeHtml(contractUrl);
+      const escapedDueDateLabel = dueDateLabel ? escapeHtml(dueDateLabel) : null;
+      const dueDateHtml = escapedDueDateLabel
+        ? `<li><strong>Due date:</strong> ${escapedDueDateLabel}</li>`
+        : "";
+      const dueDateText = dueDateLabel ? `\nDue date: ${dueDateLabel}` : "";
+
+      return {
+        subject: "You have a new service order on GCC Talent",
+        idempotencyKey: `service-order-created/${requestHash}`,
+        html: `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+  <body style="margin:0;padding:24px;background:#f6f7fb;font-family:Arial,sans-serif;color:#172033;">
+    <main style="max-width:560px;margin:0 auto;padding:32px;background:#ffffff;border-radius:12px;">
+      <h1 style="font-size:24px;margin:0 0 24px;">You have a new service order</h1>
+      <p>Hi ${escapedRecipientName},</p>
+      <p>${escapedClientName} ordered one of your services on GCC Talent.</p>
+      <ul style="padding-left:20px;line-height:1.7;">
+        <li><strong>Service:</strong> ${escapedServiceName}</li>
+        <li><strong>Package:</strong> ${escapedPackageName} — ${escapedPackageTitle}</li>
+        <li><strong>Order value:</strong> ${escapedAmountLabel}</li>
+        <li><strong>Delivery time:</strong> ${deliveryDays} day${deliveryDays === 1 ? "" : "s"}</li>
+        ${dueDateHtml}
+      </ul>
+      <p style="margin:28px 0;"><a href="${escapedContractUrl}" style="display:inline-block;padding:14px 24px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Open contract workspace</a></p>
+      <p>If the button does not work, copy and paste this link into your browser:</p>
+      <p style="word-break:break-all;"><a href="${escapedContractUrl}">${escapedContractUrl}</a></p>
+      <p>The GCC Talent team</p>
+    </main>
+  </body>
+</html>`,
+        text: `Hi ${recipientName},\n\n${clientName} ordered one of your services on GCC Talent.\n\nService: ${serviceName}\nPackage: ${packageName} — ${packageTitle}\nOrder value: ${amountLabel}\nDelivery time: ${deliveryDays} day${deliveryDays === 1 ? "" : "s"}${dueDateText}\n\nOpen the contract workspace:\n${contractUrl}\n\nThe GCC Talent team`,
+      };
+    },
+  });
+}
+
 module.exports = {
   getEmailConfiguration,
   sendVerificationEmail,
   getPasswordResetConfiguration,
   sendPasswordResetEmail,
   sendPasswordChangedEmail,
+  getServiceOrderEmailConfiguration,
+  sendServiceOrderCreatedEmail,
 };

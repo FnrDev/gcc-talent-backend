@@ -13,13 +13,32 @@ const { recordAuditLog } = require("../services/audit.service");
 const PUBLIC_PROFILE_LISTING_LIMIT = 6;
 const PUBLIC_PROFILE_REVIEW_LIMIT = 10;
 const MAX_PORTFOLIO_ITEMS = 20;
+const CLIENT_COMPANY_SIZES = new Set(["solo", "2_10", "11_50", "51_200", "201_500", "501_plus"]);
+const CURRENT_YEAR = new Date().getUTCFullYear();
+
+function emptyClientProfile(user) {
+    return {
+        user: user._id,
+        companyName: "",
+        isCompany: false,
+        description: "",
+        website: "",
+        industry: "",
+        companySize: "",
+        foundedYear: null,
+        jobsPosted: 0,
+        totalSpent: 0,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+    };
+}
 
 function isHttpUrl(value) {
     if (!value) return true;
 
     try {
         const url = new URL(value);
-        return url.protocol === "http:" || url.protocol === "https:";
+        return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
     } catch {
         return false;
     }
@@ -74,7 +93,7 @@ function privateProfileUser(user) {
 async function getMyProfile(req, res) {
     try {
         const user = await User.findById(req.user._id).select(
-            "name email role avatarUrl country city ratingAvg ratingCount isEmailVerified"
+            "name email role avatarUrl country city ratingAvg ratingCount isEmailVerified createdAt updatedAt"
         );
 
         if (!user) {
@@ -91,6 +110,10 @@ async function getMyProfile(req, res) {
 
         } else {
             return res.status(400).json({ success: false, message: "Admins do not have a client or freelancer profile." });
+        }
+
+        if (!profile && user.role === "client") {
+            profile = emptyClientProfile(user);
         }
 
         if (!profile) {
@@ -227,16 +250,18 @@ async function updateMyProfile(req, res) {
                 isCompany,
                 description,
                 website,
+                industry,
+                companySize,
+                foundedYear,
             } = req.body;
 
-            const profile = await ClientProfile.findOne({ user: user._id, });
-
-            if (!profile) {
-                return res.status(404).json({ success: false, message: "Client profile not found." });
-            }
+            let profile = await ClientProfile.findOne({ user: user._id });
+            if (!profile) profile = new ClientProfile({ user: user._id });
+            const profileWasNew = profile.isNew;
 
             if (companyName !== undefined) {
                 if (typeof companyName !== "string") return res.status(400).json({ success: false, message: "Company name must be text." });
+                if (companyName.trim().length > 120) return res.status(400).json({ success: false, message: "Company name must be 120 characters or fewer." });
                 profile.companyName = companyName.trim();
             }
             if (isCompany !== undefined) {
@@ -245,25 +270,53 @@ async function updateMyProfile(req, res) {
             }
             if (description !== undefined) {
                 if (typeof description !== "string") return res.status(400).json({ success: false, message: "Description must be text." });
+                if (description.trim().length > 2000) return res.status(400).json({ success: false, message: "Description must be 2,000 characters or fewer." });
                 profile.description = description.trim();
             }
             if (website !== undefined) {
-                if (typeof website !== "string" || !isHttpUrl(website.trim())) {
+                if (typeof website !== "string" || website.trim().length > 2048 || !isHttpUrl(website.trim())) {
                     return res.status(400).json({ success: false, message: "Website must be an http or https URL." });
                 }
                 profile.website = website.trim();
             }
+            if (industry !== undefined) {
+                if (typeof industry !== "string") return res.status(400).json({ success: false, message: "Industry must be text." });
+                if (industry.trim().length > 100) return res.status(400).json({ success: false, message: "Industry must be 100 characters or fewer." });
+                profile.industry = industry.trim();
+            }
+            if (companySize !== undefined) {
+                if (companySize === null || companySize === "") {
+                    profile.companySize = undefined;
+                } else if (typeof companySize !== "string" || !CLIENT_COMPANY_SIZES.has(companySize)) {
+                    return res.status(400).json({ success: false, message: "Select a valid company size." });
+                } else {
+                    profile.companySize = companySize;
+                }
+            }
+            if (foundedYear !== undefined) {
+                if (foundedYear === null || foundedYear === "") {
+                    profile.foundedYear = undefined;
+                } else if (!Number.isInteger(foundedYear) || foundedYear < 1800 || foundedYear > CURRENT_YEAR) {
+                    return res.status(400).json({ success: false, message: `Founded year must be between 1800 and ${CURRENT_YEAR}.` });
+                } else {
+                    profile.foundedYear = foundedYear;
+                }
+            }
 
-            const changedFields = ["companyName", "isCompany", "description", "website"]
+            if (profile.isCompany && !profile.companyName) {
+                return res.status(400).json({ success: false, message: "Company name is required for a company profile." });
+            }
+
+            const changedFields = ["companyName", "isCompany", "description", "website", "industry", "companySize", "foundedYear"]
                 .filter((field) => profile.isModified(field));
             await profile.save();
             if (userChangedFields.length) await user.save();
-            if (changedFields.length) {
+            if (profileWasNew || changedFields.length) {
                 await recordAuditLog(req, {
-                    action: "update",
+                    action: profileWasNew ? "create" : "update",
                     resource: "ClientProfile",
                     resourceId: profile._id,
-                    details: { operation: "updateMyProfile", changedFields },
+                    details: { operation: profileWasNew ? "createMyProfile" : "updateMyProfile", changedFields },
                 });
             }
 
@@ -568,6 +621,10 @@ async function getPublicProfile(req, res) {
             return res.status(400).json({ success: false, message: "Admins do not have a public marketplace profile." });
         }
 
+        if (!profile && user.role === "client") {
+            profile = emptyClientProfile(user);
+        }
+
         if (!profile) {
             return res.status(404).json({
                 success: false,
@@ -610,6 +667,9 @@ async function getPublicProfile(req, res) {
                 isCompany: profile.isCompany,
                 description: profile.description,
                 website: profile.website,
+                industry: profile.industry,
+                companySize: profile.companySize,
+                foundedYear: profile.foundedYear,
                 jobsPosted: activityStats.jobsPosted,
                 // Public marketplace trust signal used by the recovered
                 // client-profile design; unlike wallet balances, it is an

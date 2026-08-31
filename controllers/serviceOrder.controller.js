@@ -8,6 +8,10 @@ const Service = require("../models/Service");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
 const { recordAuditLogs } = require("../services/audit.service");
+const {
+  getServiceOrderEmailConfiguration,
+  sendServiceOrderCreatedEmail,
+} = require("../services/email.service");
 
 const DECLINED_TEST_CARD = "4000000000000002";
 const PAYMENT_MODE = "mock";
@@ -522,7 +526,7 @@ async function createServiceOrder(req, res) {
       });
     }
 
-    const client = await User.findById(req.user._id).select("role status");
+    const client = await User.findById(req.user._id).select("name role status");
     if (!client) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
@@ -590,7 +594,7 @@ async function createServiceOrder(req, res) {
     const [packageItem, freelancer] = await Promise.all([
       Package.findOne({ _id: normalizedPackageId, freelancer: service.freelancer, isActive: true }),
       User.findOne({ _id: service.freelancer, role: "freelancer", status: "active" })
-        .select("role status"),
+        .select("name email role status notificationPrefs.email"),
     ]);
     if (!packageItem) {
       return res.status(404).json({ success: false, message: "This package is not available." });
@@ -652,16 +656,37 @@ async function createServiceOrder(req, res) {
       contract = await reconcileOrder(contract, req);
     }
 
-    return res.status(created ? 201 : 200).json({
+    const responseContract = await populatedContract(contract._id);
+    res.status(created ? 201 : 200).json({
       success: true,
       message: created
         ? "Demo payment succeeded and the service order is now active."
         : "The existing demo order was returned safely.",
       data: {
-        contract: await populatedContract(contract._id),
+        contract: responseContract,
         order: { paymentMode: PAYMENT_MODE, paymentStatus: "succeeded", replayed: !created },
       },
     });
+
+    if (
+      created &&
+      freelancer.status === "active" &&
+      freelancer.notificationPrefs?.email !== false
+    ) {
+      try {
+        await sendServiceOrderCreatedEmail({
+          user: freelancer,
+          client,
+          contract,
+          configuration: getServiceOrderEmailConfiguration(),
+        });
+      } catch (_) {
+        // Notification delivery is best-effort and must never change checkout success.
+        console.error("Service order notification could not be delivered.");
+      }
+    }
+
+    return;
   } catch (error) {
     return handleError(res, error);
   }

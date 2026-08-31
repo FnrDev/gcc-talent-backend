@@ -63,6 +63,21 @@ const CLIENT_NAMES = [
   "Majlis Media",
 ];
 
+const CLIENT_INDUSTRIES = [
+  "Retail & Commerce",
+  "Logistics",
+  "Creative Services",
+  "Food & Beverage",
+  "E-commerce",
+  "Healthcare",
+  "Education",
+  "Technology",
+  "Hospitality",
+  "Media",
+];
+
+const CLIENT_COMPANY_SIZES = ["2_10", "11_50", "51_200", "201_500", "501_plus"];
+
 const LOCATIONS = [
   ["Bahrain", "Manama"],
   ["Saudi Arabia", "Riyadh"],
@@ -289,6 +304,9 @@ async function seedClients() {
           isCompany: true,
           description: `${companyName} hires independent GCC talent for focused product and growth projects.`,
           website: `https://example.com/${companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          industry: CLIENT_INDUSTRIES[index % CLIENT_INDUSTRIES.length],
+          companySize: CLIENT_COMPANY_SIZES[index % CLIENT_COMPANY_SIZES.length],
+          foundedYear: 2008 + index,
         },
       },
       { upsert: true, returnDocument: "after", runValidators: true, setDefaultsOnInsert: true },

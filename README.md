@@ -60,7 +60,8 @@ Use a real Resend sending key and an address on a [verified Resend domain](https
 Keep the key in `.env` locally or the deployment's secret environment variables; never put it in frontend code.
 `API_BASE_URL` is the externally reachable **backend** URL used in email links, including any reverse-proxy
 base path. Production requires this setting to use HTTPS; localhost links only work on the machine running the API.
-`CLIENT_URL` is the frontend base URL used for CORS and password reset links. Use a public HTTPS URL in production.
+`CLIENT_URL` is the frontend base URL used for CORS, password reset links, and service-order contract links.
+Use a public HTTPS URL in production.
 Missing or invalid email configuration makes registration return
 `503` before creating an account.
 
@@ -418,6 +419,12 @@ delivery from the stored package. Use `4242 4242 4242 4242` for success and
 `4000 0000 0000 0002` for a deterministic `402 MOCK_CARD_DECLINED` response. Do not enter real card
 details. Full card numbers and CVC values are validated transiently and are never stored, returned,
 or written to audit logs.
+
+After a new order is committed, the API responds immediately and then makes a best-effort email
+notification to the active freelancer when their email preference is enabled. Idempotent checkout
+replays do not resend the notification, and email delivery failures do not change checkout success.
+The message links to `CLIENT_URL/contracts/{contractId}`. Sending to arbitrary freelancer addresses
+requires a sender on a verified Resend domain; use provider-designated recipients for smoke tests.
 
 ```bash
 curl -X POST http://localhost:3000/services/SERVICE_ID/orders \
