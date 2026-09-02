@@ -486,7 +486,7 @@ function publicUserSummary(user) {
 
 async function getFreelancerListings(user) {
     const services = await Service.aggregate([
-        { $match: { freelancer: user._id } },
+        { $match: { freelancer: user._id, isHidden: { $ne: true } } },
         {
             $lookup: {
                 from: Package.collection.name,

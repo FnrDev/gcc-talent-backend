@@ -104,11 +104,7 @@ function escapeRegExp(value) {
 }
 
 function serviceViewPipeline(initialMatch = {}) {
-  const pipeline = [];
-
-  if (Object.keys(initialMatch).length > 0) {
-    pipeline.push({ $match: initialMatch });
-  }
+  const pipeline = [{ $match: { ...initialMatch, isHidden: { $ne: true } } }];
 
   pipeline.push(
     {

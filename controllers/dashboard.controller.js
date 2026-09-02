@@ -103,7 +103,7 @@ async function getFreelancerDashboard(user) {
       { $match: { freelancer: userId } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]),
-    Service.countDocuments({ freelancer: userId }),
+    Service.countDocuments({ freelancer: userId, isHidden: { $ne: true } }),
     Proposal.find({ freelancer: userId })
       .select("job amount deliveryDays status updatedAt")
       .populate("job", "title status")

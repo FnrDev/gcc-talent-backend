@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const adminController = require("../controllers/admin.controller");
+const adminMarketplaceController = require("../controllers/adminMarketplace.controller");
 const auditController = require("../controllers/audit.controller");
 const skillController = require("../controllers/skill.controller");
 const seedController = require("../controllers/seed.controller");
@@ -21,6 +22,16 @@ router.get("/users", adminController.getUsers);
 router.get("/users/:id", validateObjectId, adminController.getUser);
 router.patch("/users/:id", validateObjectId, adminController.updateUser);
 router.delete("/users/:id", validateObjectId, adminController.deleteUser);
+
+router.get("/jobs", adminMarketplaceController.getJobs);
+router.get("/jobs/:id", validateObjectId, adminMarketplaceController.getJob);
+router.patch("/jobs/:id", validateObjectId, adminMarketplaceController.updateJob);
+router.delete("/jobs/:id", validateObjectId, adminMarketplaceController.deleteJob);
+
+router.get("/services", adminMarketplaceController.getServices);
+router.get("/services/:id", validateObjectId, adminMarketplaceController.getService);
+router.patch("/services/:id", validateObjectId, adminMarketplaceController.updateService);
+router.delete("/services/:id", validateObjectId, adminMarketplaceController.deleteService);
 
 router.get("/categories", adminController.getCategories);
 router.post("/categories", adminController.createCategory);

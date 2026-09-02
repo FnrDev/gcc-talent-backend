@@ -219,7 +219,7 @@ async function getServiceReviews(req, res) {
         const currentPage = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1
         const currentLimit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20
 
-        const service = await Service.findById(req.params.id)
+        const service = await Service.findOne({ _id: req.params.id, isHidden: { $ne: true } })
             .select("name freelancer")
             .populate("freelancer", "name avatarUrl ratingAvg ratingCount")
             .lean()

@@ -453,6 +453,14 @@ curl -X POST http://localhost:3000/services/SERVICE_ID/orders \
 | `GET` | `/admin/users/{userId}` | Return one user's account summary, contracts, and transactions. | Admin |
 | `PATCH` | `/admin/users/{userId}` | Update a user's status, email-verification flag, or role. | Admin |
 | `DELETE` | `/admin/users/{userId}` | Delete a user with no marketplace history; otherwise suspend the account. | Admin |
+| `GET` | `/admin/jobs?search={query}&status={status}&visibility={visibility}&featured={boolean}&sort={sort}&page={page}&limit={limit}` | Search, filter, sort, and paginate every job, including hidden and non-public records. | Admin |
+| `GET` | `/admin/jobs/{jobId}` | Return one job with its owner, taxonomy, and proposal/contract reference counts. | Admin |
+| `PATCH` | `/admin/jobs/{jobId}` | Hide, feature, publish, close, or reopen a job within the existing safe lifecycle transitions. | Admin |
+| `DELETE` | `/admin/jobs/{jobId}` | Delete only a draft job with no proposals or contracts; hide published/history-backed jobs instead. | Admin |
+| `GET` | `/admin/services?search={query}&visibility={visibility}&sort={sort}&page={page}&limit={limit}` | Search, filter, sort, and paginate every service with its freelancer and packages. | Admin |
+| `GET` | `/admin/services/{serviceId}` | Return one service and its contract reference count. | Admin |
+| `PATCH` | `/admin/services/{serviceId}` | Rename or hide/unhide a service. Hidden services are excluded from public discovery and new orders. | Admin |
+| `DELETE` | `/admin/services/{serviceId}` | Delete a service with no contract history while preserving its reusable packages; otherwise hide it. | Admin |
 | `GET` | `/admin/categories` | List job categories. | Admin |
 | `POST` | `/admin/categories` | Create a job category. | Admin |
 | `GET` | `/admin/categories/{categoryId}` | Return a category and its skills. | Admin |

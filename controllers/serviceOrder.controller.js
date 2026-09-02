@@ -582,7 +582,11 @@ async function createServiceOrder(req, res) {
       return res.status(400).json({ success: false, message: paymentError });
     }
 
-    const service = await Service.findOne({ _id: serviceId, packages: normalizedPackageId })
+    const service = await Service.findOne({
+      _id: serviceId,
+      packages: normalizedPackageId,
+      isHidden: { $ne: true },
+    })
       .select("freelancer name packages");
     if (!service) {
       return res.status(404).json({ success: false, message: "Service or package not found." });

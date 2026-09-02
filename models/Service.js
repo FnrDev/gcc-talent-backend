@@ -53,11 +53,15 @@ const serviceSchema = new mongoose.Schema(
         message: "A service can include at most five images.",
       },
     },
+    // Admin moderation keeps historical service records intact while removing
+    // the listing from public discovery and new checkout attempts.
+    isHidden: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
 serviceSchema.index({ freelancer: 1, name: 1 }, { unique: true });
 serviceSchema.index({ packages: 1 }, { unique: true });
+serviceSchema.index({ isHidden: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Service", serviceSchema);

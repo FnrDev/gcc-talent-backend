@@ -87,6 +87,7 @@ function parseSearchQuery(query) {
 
 function serviceViewPipeline() {
   return [
+    { $match: { isHidden: { $ne: true } } },
     {
       $lookup: {
         from: Package.collection.name,
